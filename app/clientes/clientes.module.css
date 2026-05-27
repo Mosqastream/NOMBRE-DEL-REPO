@@ -1,0 +1,256 @@
+.page {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(255, 40, 52, 0.2), transparent 24%),
+    radial-gradient(circle at 82% 16%, rgba(255, 110, 110, 0.12), transparent 18%),
+    linear-gradient(180deg, #070707 0%, #120607 48%, #090909 100%);
+  color: #fff7f8;
+  padding: 28px 18px 56px;
+}
+
+.shell {
+  max-width: 980px;
+  margin: 0 auto;
+  display: grid;
+  gap: 22px;
+}
+
+.hero,
+.searchCard,
+.viewerCard,
+.mailCard,
+.emptyCard {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
+    rgba(16, 12, 12, 0.86);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(16px);
+  border-radius: 28px;
+}
+
+.hero {
+  padding: 26px 24px;
+}
+
+.eyebrow {
+  color: #ff7b84;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.hero h1 {
+  margin: 10px 0 0;
+  font-size: clamp(2rem, 5vw, 3.2rem);
+  line-height: 0.96;
+  letter-spacing: -0.06em;
+}
+
+.hero p {
+  margin: 14px 0 0;
+  max-width: 760px;
+  color: #e1cbcf;
+  line-height: 1.6;
+}
+
+.searchCard,
+.viewerCard {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+}
+
+.searchCard strong {
+  font-size: 1.15rem;
+}
+
+.searchRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 170px;
+  gap: 12px;
+}
+
+.input,
+.button,
+.toggle,
+.toggleActive,
+.copyButton,
+.openButton {
+  min-height: 50px;
+  border-radius: 16px;
+  font-size: 0.96rem;
+}
+
+.input {
+  width: 100%;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  outline: none;
+}
+
+.input::placeholder {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.button,
+.openButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  cursor: pointer;
+  text-decoration: none;
+  color: #fff;
+  font-weight: 900;
+  background: linear-gradient(135deg, #ff1622, #92060f);
+  box-shadow: 0 14px 28px rgba(229, 9, 20, 0.18);
+}
+
+.button:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.note {
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 116, 116, 0.24);
+  background: rgba(255, 80, 80, 0.08);
+  color: #ffc6ca;
+}
+
+.error {
+  margin: 0;
+  color: #ffc3c8;
+  font-weight: 700;
+}
+
+.toggleRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.toggle,
+.toggleActive,
+.copyButton {
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.76);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.toggleActive {
+  color: #fff;
+  background: linear-gradient(135deg, rgba(255, 31, 45, 0.94), rgba(124, 8, 14, 0.94));
+}
+
+.viewerCard {
+  gap: 18px;
+}
+
+.mailCard {
+  padding: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.mailHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mailHeader h2 {
+  margin: 0;
+  font-size: 1.3rem;
+  line-height: 1.15;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #ffd8db;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.meta {
+  display: grid;
+  gap: 6px;
+  color: #ddced0;
+}
+
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.copyButton {
+  color: #fff;
+}
+
+.iframeWrap {
+  border-radius: 20px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #fff;
+}
+
+.iframe {
+  width: 100%;
+  min-height: 920px;
+  border: 0;
+  background: #fff;
+}
+
+.textBlock {
+  margin: 0;
+  white-space: pre-wrap;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #fff4f5;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.emptyCard {
+  padding: 18px;
+  color: #ddced0;
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding: 18px 14px 40px;
+  }
+
+  .searchRow {
+    grid-template-columns: 1fr;
+  }
+
+  .button,
+  .openButton,
+  .copyButton,
+  .toggle,
+  .toggleActive {
+    width: 100%;
+  }
+
+  .iframe {
+    min-height: 760px;
+  }
+}

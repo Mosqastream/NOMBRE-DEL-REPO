@@ -1,0 +1,402 @@
+import { stripHtml } from './lemon-parser'
+import { type CodePlatformKey } from './codes-shared'
+
+export type SdnetpanelMessage = {
+  uid: number
+  subject: string
+  from: string
+  to: string[]
+  date: Date
+  bodyText: string
+  bodyHtml: string
+  messageId: string
+  platform: CodePlatformKey
+  source: 'sdnetpanel'
+  variantLabel: string
+}
+
+type SdnetpanelConfig = {
+  baseUrl: string
+  email: string
+  id: string
+  label: string
+  maxItems: number
+  password: string
+}
+
+type SdnetpanelFunction = {
+  email: string | null
+  id: number
+  name: string
+  status: number | boolean
+  subjects: string[]
+}
+
+type SdnetpanelService = {
+  functions?: SdnetpanelFunction[]
+  id: number
+  name: string
+}
+
+type SdnetpanelSearchResponse = {
+  body?: string | null
+  created_at?: string | null
+  date?: string | null
+  from?: string | null
+  html?: string | null
+  id?: number | string | null
+  message_id?: string | null
+  messageId?: string | null
+  subject?: string | null
+  text?: string | null
+}
+
+const DEFAULT_MAX_ITEMS = 3
+
+const SDNETPANEL_SERVICE_MAP: Partial<Record<CodePlatformKey, string>> = {
+  disney: 'Disney+',
+  hbo: 'Max',
+  netflix: 'Netflix',
+}
+
+const normalizeText = (value: string | null | undefined) => (value || '').trim()
+const normalizeBaseUrl = (value: string | null | undefined) => normalizeText(value).replace(/\/+$/, '')
+const readString = (value: unknown) =>
+  typeof value === 'string' ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : ''
+
+const toPositiveInt = (value: string | undefined, fallback: number) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
+}
+
+const buildAccountId = (baseUrl: string, email: string) =>
+  `${baseUrl.toLowerCase()}|${email.toLowerCase()}`.replace(/[^a-z0-9|._:@/-]+/g, '-')
+
+const buildAccountLabel = (email: string, fallback?: string | null) => {
+  const explicit = normalizeText(fallback)
+  if (explicit) return explicit
+  const local = email.split('@')[0]?.trim()
+  return local || email
+}
+
+const sanitizeHtml = (html: string) =>
+  html
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, '')
+    .replace(/\son\w+\s*=\s*(['"]).*?\1/gi, '')
+    .replace(/\son\w+\s*=\s*[^ >]+/gi, '')
+    .replace(/href\s*=\s*(['"])\s*javascript:[^'"]*\1/gi, 'href="#"')
+    .trim()
+
+const parseDate = (value: string | null | undefined) => {
+  const normalized = normalizeText(value)
+  if (!normalized) return new Date()
+
+  const parsed = new Date(normalized)
+  if (!Number.isNaN(parsed.getTime())) return parsed
+
+  return new Date()
+}
+
+const getLegacyConfig = (): SdnetpanelConfig | null => {
+  const email = normalizeText(process.env.SDNETPANEL_USERNAME)
+  const password = normalizeText(process.env.SDNETPANEL_PASSWORD)
+  if (!email || !password) return null
+
+  const baseUrl = normalizeBaseUrl(process.env.SDNETPANEL_BASE_URL) || 'https://sdnetpanel.com'
+  return {
+    baseUrl,
+    email,
+    id: buildAccountId(baseUrl, email),
+    label: buildAccountLabel(email),
+    maxItems: toPositiveInt(process.env.SDNETPANEL_MAX_ITEMS, DEFAULT_MAX_ITEMS),
+    password,
+  }
+}
+
+const getJsonConfigs = (): SdnetpanelConfig[] => {
+  const raw = normalizeText(process.env.SDNETPANEL_ACCOUNTS_JSON)
+  if (!raw) return []
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+
+    const fallbackBaseUrl = normalizeBaseUrl(process.env.SDNETPANEL_BASE_URL) || 'https://sdnetpanel.com'
+    const fallbackMaxItems = toPositiveInt(process.env.SDNETPANEL_MAX_ITEMS, DEFAULT_MAX_ITEMS)
+
+    return parsed
+      .map((item, index) => {
+        if (!item || typeof item !== 'object') return null
+
+        const record = item as Record<string, unknown>
+        const email = normalizeText(readString(record.email) || readString(record.username))
+        const password = normalizeText(readString(record.password))
+        if (!email || !password) return null
+
+        const baseUrl = normalizeBaseUrl(readString(record.baseUrl)) || fallbackBaseUrl
+        const rawMaxItems = readString(record.maxItems)
+
+        return {
+          baseUrl,
+          email,
+          id: normalizeText(readString(record.id)) || buildAccountId(baseUrl, email),
+          label: buildAccountLabel(email, readString(record.label) || readString(record.name) || `Cuenta ${index + 1}`),
+          maxItems: toPositiveInt(rawMaxItems || String(fallbackMaxItems), fallbackMaxItems),
+          password,
+        }
+      })
+      .filter((config): config is SdnetpanelConfig => Boolean(config))
+  } catch {
+    return []
+  }
+}
+
+const getConfig = (): SdnetpanelConfig[] => {
+  const jsonConfigs = getJsonConfigs()
+  if (jsonConfigs.length > 0) return jsonConfigs
+
+  const legacyConfig = getLegacyConfig()
+  return legacyConfig ? [legacyConfig] : []
+}
+
+const isLikelyGlobalMessageId = (value: string) => value.includes('@') || (value.startsWith('<') && value.endsWith('>'))
+
+const getScopedMessageId = (accountId: string, rawMessageId: string, fallback: string) => {
+  if (!rawMessageId) return fallback
+  return isLikelyGlobalMessageId(rawMessageId) ? rawMessageId : `${accountId}:${rawMessageId}`
+}
+
+const login = async (config: SdnetpanelConfig) => {
+  const response = await fetch(`${config.baseUrl}/api/login`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      email: config.email,
+      password: config.password,
+    }),
+    cache: 'no-store',
+  })
+
+  if (!response.ok) {
+    throw new Error(`SDPanel devolvio estado ${response.status} al iniciar sesion.`)
+  }
+
+  const payload = (await response.json()) as { token?: string }
+  const token = normalizeText(payload.token)
+  if (!token) {
+    throw new Error('SDPanel no devolvio un token de sesion valido.')
+  }
+
+  return token
+}
+
+const readServices = async (params: { baseUrl: string; token: string }) => {
+  const response = await fetch(`${params.baseUrl}/api/services`, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${params.token}`,
+    },
+    cache: 'no-store',
+  })
+
+  if (!response.ok) {
+    throw new Error(`SDPanel devolvio estado ${response.status} al cargar servicios.`)
+  }
+
+  return (await response.json()) as SdnetpanelService[]
+}
+
+const findServiceForPlatform = (services: SdnetpanelService[], platform: CodePlatformKey) => {
+  const targetName = SDNETPANEL_SERVICE_MAP[platform]
+  if (!targetName) return null
+
+  return services.find(service => normalizeText(service.name).toLowerCase() === targetName.toLowerCase()) || null
+}
+
+const toSearchItems = (payload: unknown) => {
+  if (Array.isArray(payload)) return payload as SdnetpanelSearchResponse[]
+  if (payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown[] }).data)) {
+    return (payload as { data: SdnetpanelSearchResponse[] }).data
+  }
+  return payload && typeof payload === 'object' ? [payload as SdnetpanelSearchResponse] : []
+}
+
+const parseSearchResponse = (params: {
+  accountId: string
+  accountLabel: string
+  functionId: number
+  items: SdnetpanelSearchResponse[]
+  maxItems: number
+  platform: CodePlatformKey
+  recipient: string
+  variantLabel: string
+}) => {
+  return params.items.slice(0, params.maxItems).map((item, index) => {
+    const subject = normalizeText(item.subject) || 'Mensaje automatico'
+    const rawBody = normalizeText(item.html) || normalizeText(item.body)
+    const bodyHtml = rawBody ? sanitizeHtml(rawBody) : ''
+    const bodyText = normalizeText(item.text) || stripHtml(bodyHtml)
+    const uidBase = Number(item.id)
+    const uid = Number.isFinite(uidBase) && uidBase > 0 ? uidBase : params.functionId * 1000 + index + 1
+    const rawMessageId = normalizeText(item.message_id) || normalizeText(item.messageId)
+    const messageId = getScopedMessageId(
+      params.accountId,
+      rawMessageId,
+      `sdnetpanel:${params.accountId}:${params.platform}:${params.functionId}:${uid}:${index}`
+    )
+    const variantLabel = params.accountLabel ? `${params.accountLabel} - ${params.variantLabel}` : params.variantLabel
+
+    return {
+      uid,
+      subject,
+      from: normalizeText(item.from) || '-',
+      to: [params.recipient],
+      date: parseDate(item.date || item.created_at),
+      bodyText,
+      bodyHtml,
+      messageId,
+      platform: params.platform,
+      source: 'sdnetpanel' as const,
+      variantLabel,
+    }
+  })
+}
+
+const searchFunctionMessages = async (params: {
+  accountId: string
+  accountLabel: string
+  baseUrl: string
+  func: SdnetpanelFunction
+  maxItems: number
+  platform: CodePlatformKey
+  recipient: string
+  token: string
+}): Promise<SdnetpanelMessage[]> => {
+  const destination = normalizeText(params.func.email) || params.recipient
+  if (!destination || params.func.subjects.length === 0) return []
+
+  const response = await fetch(`${params.baseUrl}/api/search-email/all`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${params.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      subjects: params.func.subjects,
+      to: destination,
+    }),
+    cache: 'no-store',
+  })
+
+  if (response.status === 404) {
+    return []
+  }
+
+  if (!response.ok) {
+    throw new Error(`SDPanel devolvio estado ${response.status} al buscar correos.`)
+  }
+
+  const payload = await response.json()
+  return parseSearchResponse({
+    accountId: params.accountId,
+    accountLabel: params.accountLabel,
+    functionId: params.func.id,
+    items: toSearchItems(payload),
+    maxItems: params.maxItems,
+    platform: params.platform,
+    recipient: destination,
+    variantLabel: params.func.name,
+  })
+}
+
+export const isSdnetpanelConfigured = () => getConfig().length > 0
+
+const fetchConfigMessages = async (config: SdnetpanelConfig, params: { platform: CodePlatformKey; recipient: string }) => {
+  const token = await login(config)
+  const services = await readServices({ baseUrl: config.baseUrl, token })
+  const service = findServiceForPlatform(services, params.platform)
+  if (!service) {
+    return { messages: [] as SdnetpanelMessage[], totalScanned: 0, variantsScanned: [] as string[] }
+  }
+
+  const functions = (service.functions || []).filter(func => Boolean(func.status) && func.subjects.length > 0)
+  if (functions.length === 0) {
+    return { messages: [] as SdnetpanelMessage[], totalScanned: 0, variantsScanned: [] as string[] }
+  }
+
+  const settled = await Promise.allSettled(
+    functions.map(func =>
+      searchFunctionMessages({
+        accountId: config.id,
+        accountLabel: config.label,
+        baseUrl: config.baseUrl,
+        func,
+        maxItems: config.maxItems,
+        platform: params.platform,
+        recipient: params.recipient,
+        token,
+      })
+    )
+  )
+
+  const messages = settled
+    .filter((result): result is PromiseFulfilledResult<SdnetpanelMessage[]> => result.status === 'fulfilled')
+    .flatMap(result => result.value)
+
+  return {
+    messages,
+    totalScanned: messages.length,
+    variantsScanned: functions.map(func => `${config.label} - ${func.name}`).filter(Boolean),
+  }
+}
+
+export const fetchSdnetpanelMessages = async (params: {
+  platform: CodePlatformKey
+  recipient: string
+}): Promise<{ messages: SdnetpanelMessage[]; totalScanned: number; variantsScanned: string[] }> => {
+  const configs = getConfig()
+  if (configs.length === 0) {
+    return { messages: [], totalScanned: 0, variantsScanned: [] }
+  }
+
+  const settled = await Promise.allSettled(
+    configs.map(config =>
+      fetchConfigMessages(config, {
+        platform: params.platform,
+        recipient: params.recipient,
+      })
+    )
+  )
+
+  const successful = settled.filter(
+    (
+      result
+    ): result is PromiseFulfilledResult<{
+      messages: SdnetpanelMessage[]
+      totalScanned: number
+      variantsScanned: string[]
+    }> => result.status === 'fulfilled'
+  )
+  const failed = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+
+  if (successful.length === 0 && failed.length > 0) {
+    throw failed[0].reason instanceof Error ? failed[0].reason : new Error('SDPanel no pudo cargar ninguna cuenta.')
+  }
+
+  const messages = successful.flatMap(result => result.value.messages)
+  const totalScanned = successful.reduce((sum, result) => sum + result.value.totalScanned, 0)
+  const variantsScanned = Array.from(
+    new Set(successful.flatMap(result => result.value.variantsScanned).filter(Boolean))
+  )
+
+  return {
+    messages,
+    totalScanned,
+    variantsScanned,
+  }
+}

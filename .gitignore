@@ -1,0 +1,10 @@
+.env.local
+.env*.local
+node_modules
+.next
+dist
+build
+*.log
+*.tsbuildinfo
+.telegram-bridge-session
+coigosnmetfg.lix
