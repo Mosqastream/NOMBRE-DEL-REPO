@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { unstable_noStore as noStore } from 'next/cache'
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { CodesAccessError, enforceCodesRecipientAccess } from '@/lib/codes-access'
@@ -328,6 +329,8 @@ const dedupeMessages = (messages: Array<ImapMessage | GlowpremMessage | Goatstre
 }
 
 export async function GET(request: NextRequest) {
+  noStore()
+
   const recipient = normalizeEmail(request.nextUrl.searchParams.get('recipient') || '')
   if (!recipient || !recipient.includes('@')) {
     return NextResponse.json({ error: 'recipient es requerido' }, { status: 400 })

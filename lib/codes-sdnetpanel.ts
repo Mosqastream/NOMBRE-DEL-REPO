@@ -118,37 +118,65 @@ const getJsonConfigs = (): SdnetpanelConfig[] => {
   const raw = normalizeText(process.env.SDNETPANEL_ACCOUNTS_JSON)
   if (!raw) return []
 
+  const mapAccountRecord = (record: Record<string, unknown>, index: number, fallbackBaseUrl: string, fallbackMaxItems: number) => {
+    const email = normalizeText(readString(record.email) || readString(record.username))
+    const password = normalizeText(readString(record.password))
+    if (!email || !password) return null
+
+    const baseUrl = normalizeBaseUrl(readString(record.baseUrl)) || fallbackBaseUrl
+    const rawMaxItems = readString(record.maxItems)
+
+    return {
+      baseUrl,
+      email,
+      id: normalizeText(readString(record.id)) || buildAccountId(baseUrl, email),
+      label: buildAccountLabel(email, readString(record.label) || readString(record.name) || `Cuenta ${index + 1}`),
+      maxItems: toPositiveInt(rawMaxItems || String(fallbackMaxItems), fallbackMaxItems),
+      password,
+    }
+  }
+
+  const parseLooseAccounts = (value: string) => {
+    const trimmed = value.trim()
+    if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return []
+
+    return trimmed
+      .slice(1, -1)
+      .split(/}\s*,\s*{/)
+      .map((chunk, index) => {
+        const body = chunk.replace(/^\s*{/, '').replace(/}\s*$/, '')
+        const record: Record<string, string> = {}
+
+        for (const pair of body.split(/\s*,\s*/)) {
+          const separator = pair.indexOf(':')
+          if (separator <= 0) continue
+          const key = pair.slice(0, separator).trim().replace(/^['"]|['"]$/g, '')
+          const value = pair.slice(separator + 1).trim().replace(/^['"]|['"]$/g, '')
+          if (key) record[key] = value
+        }
+
+        return Object.keys(record).length > 0 ? { record, index } : null
+      })
+      .filter((item): item is { record: Record<string, string>; index: number } => Boolean(item))
+  }
+
+  const fallbackBaseUrl = normalizeBaseUrl(process.env.SDNETPANEL_BASE_URL) || 'https://sdnetpanel.com'
+  const fallbackMaxItems = toPositiveInt(process.env.SDNETPANEL_MAX_ITEMS, DEFAULT_MAX_ITEMS)
+
   try {
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
 
-    const fallbackBaseUrl = normalizeBaseUrl(process.env.SDNETPANEL_BASE_URL) || 'https://sdnetpanel.com'
-    const fallbackMaxItems = toPositiveInt(process.env.SDNETPANEL_MAX_ITEMS, DEFAULT_MAX_ITEMS)
-
     return parsed
       .map((item, index) => {
         if (!item || typeof item !== 'object') return null
-
-        const record = item as Record<string, unknown>
-        const email = normalizeText(readString(record.email) || readString(record.username))
-        const password = normalizeText(readString(record.password))
-        if (!email || !password) return null
-
-        const baseUrl = normalizeBaseUrl(readString(record.baseUrl)) || fallbackBaseUrl
-        const rawMaxItems = readString(record.maxItems)
-
-        return {
-          baseUrl,
-          email,
-          id: normalizeText(readString(record.id)) || buildAccountId(baseUrl, email),
-          label: buildAccountLabel(email, readString(record.label) || readString(record.name) || `Cuenta ${index + 1}`),
-          maxItems: toPositiveInt(rawMaxItems || String(fallbackMaxItems), fallbackMaxItems),
-          password,
-        }
+        return mapAccountRecord(item as Record<string, unknown>, index, fallbackBaseUrl, fallbackMaxItems)
       })
       .filter((config): config is SdnetpanelConfig => Boolean(config))
   } catch {
-    return []
+    return parseLooseAccounts(raw)
+      .map(item => mapAccountRecord(item.record, item.index, fallbackBaseUrl, fallbackMaxItems))
+      .filter((config): config is SdnetpanelConfig => Boolean(config))
   }
 }
 
