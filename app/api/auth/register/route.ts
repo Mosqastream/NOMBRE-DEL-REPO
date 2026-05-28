@@ -70,6 +70,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Ese número de teléfono ya está registrado.' }, { status: 409 })
     }
 
+    const securityPinHash = hashSecurityPin(securityPin)
+
     const createdUser = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
@@ -77,7 +79,7 @@ export async function POST(request: NextRequest) {
       user_metadata: {
         username,
         phone,
-        security_pin_hash: hashSecurityPin(securityPin),
+        security_pin_hash: securityPinHash,
         telegram: telegram || null,
       },
     })
@@ -101,9 +103,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: createdUser.error.message }, { status: 400 })
     }
 
+    const createdUserId = createdUser.data.user?.id || null
+    if (createdUserId) {
+      const profileResp = await supabaseAdmin
+        .from('profiles')
+        .upsert(
+          {
+            id: createdUserId,
+            username,
+            phone,
+            telegram: telegram || null,
+            role: 'usuario',
+            security_pin_hash: securityPinHash,
+            updated_at: new Date().toISOString(),
+          } as never,
+          { onConflict: 'id' }
+        )
+
+      if (profileResp.error) {
+        return NextResponse.json({ error: profileResp.error.message }, { status: 500 })
+      }
+    }
+
     return NextResponse.json({
       message: 'Cuenta creada y aprobada al instante.',
-      userId: createdUser.data.user?.id || null,
+      userId: createdUserId,
     })
   } catch (error) {
     return NextResponse.json(

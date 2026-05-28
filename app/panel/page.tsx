@@ -428,10 +428,11 @@ export default function PanelPage() {
     return rawUsers
       .filter(user => (!term ? true : user.username.toLowerCase().includes(term)))
       .sort((left, right) => {
-        if (right.activeAccounts !== left.activeAccounts) {
-          return right.activeAccounts - left.activeAccounts
+        const dateDiff = new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+        if (Number.isFinite(dateDiff) && dateDiff !== 0) {
+          return dateDiff
         }
-        return left.username.localeCompare(right.username)
+        return right.activeAccounts - left.activeAccounts
       })
   }, [ownerUserSearch, panelData?.allUsers])
 

@@ -277,7 +277,8 @@ export async function fetchPanelBootstrap(
   const profilesResp = await supabaseAdmin
     .from('profiles')
     .select('id, username, role, phone, telegram, created_at')
-    .order('username', { ascending: true })
+    .order('created_at', { ascending: false })
+    .range(0, 9999)
 
   if (profilesResp.error) {
     throw new Error(profilesResp.error.message)
