@@ -1,115 +1,46 @@
 begin;
 
-do $$
+create or replace function pg_temp.add_public_realtime_table(table_name text)
+returns void
+language plpgsql
+as $realtime$
+declare
+  table_oid regclass;
 begin
-  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    if not exists (
-      select 1
-      from pg_publication_rel rel
-      join pg_class cls on cls.oid = rel.prrelid
-      join pg_namespace nsp on nsp.oid = cls.relnamespace
-      join pg_publication pub on pub.oid = rel.prpubid
-      where pub.pubname = 'supabase_realtime'
-        and nsp.nspname = 'public'
-        and cls.relname = 'profiles'
-    ) then
-      alter publication supabase_realtime add table public.profiles;
-    end if;
+  table_oid := to_regclass('public.' || table_name);
 
-    if not exists (
-      select 1
-      from pg_publication_rel rel
-      join pg_class cls on cls.oid = rel.prrelid
-      join pg_namespace nsp on nsp.oid = cls.relnamespace
-      join pg_publication pub on pub.oid = rel.prpubid
-      where pub.pubname = 'supabase_realtime'
-        and nsp.nspname = 'public'
-        and cls.relname = 'service_accounts'
-    ) then
-      alter publication supabase_realtime add table public.service_accounts;
-    end if;
-
-    if not exists (
-      select 1
-      from pg_publication_rel rel
-      join pg_class cls on cls.oid = rel.prrelid
-      join pg_namespace nsp on nsp.oid = cls.relnamespace
-      join pg_publication pub on pub.oid = rel.prpubid
-      where pub.pubname = 'supabase_realtime'
-        and nsp.nspname = 'public'
-        and cls.relname = 'support_requests'
-    ) then
-      alter publication supabase_realtime add table public.support_requests;
-    end if;
-
-    if not exists (
-      select 1
-      from pg_publication_rel rel
-      join pg_class cls on cls.oid = rel.prrelid
-      join pg_namespace nsp on nsp.oid = cls.relnamespace
-      join pg_publication pub on pub.oid = rel.prpubid
-      where pub.pubname = 'supabase_realtime'
-        and nsp.nspname = 'public'
-        and cls.relname = 'support_messages'
-    ) then
-      alter publication supabase_realtime add table public.support_messages;
-    end if;
-
-    if not exists (
-      select 1
-      from pg_publication_rel rel
-      join pg_class cls on cls.oid = rel.prrelid
-      join pg_namespace nsp on nsp.oid = cls.relnamespace
-      join pg_publication pub on pub.oid = rel.prpubid
-      where pub.pubname = 'supabase_realtime'
-        and nsp.nspname = 'public'
-        and cls.relname = 'panel_products'
-    ) then
-      alter publication supabase_realtime add table public.panel_products;
-    end if;
-
-    if not exists (
-      select 1
-      from pg_publication_rel rel
-      join pg_class cls on cls.oid = rel.prrelid
-      join pg_namespace nsp on nsp.oid = cls.relnamespace
-      join pg_publication pub on pub.oid = rel.prpubid
-      where pub.pubname = 'supabase_realtime'
-        and nsp.nspname = 'public'
-        and cls.relname = 'panel_product_special_prices'
-    ) then
-      alter publication supabase_realtime add table public.panel_product_special_prices;
-    end if;
-
-    if not exists (
-      select 1
-      from pg_publication_rel rel
-      join pg_class cls on cls.oid = rel.prrelid
-      join pg_namespace nsp on nsp.oid = cls.relnamespace
-      join pg_publication pub on pub.oid = rel.prpubid
-      where pub.pubname = 'supabase_realtime'
-        and nsp.nspname = 'public'
-        and cls.relname = 'panel_sales'
-    ) then
-      alter publication supabase_realtime add table public.panel_sales;
-    end if;
-
-    if to_regclass('public.support_request_history') is not null and not exists (
-      select 1
-      from pg_publication_rel rel
-      join pg_class cls on cls.oid = rel.prrelid
-      join pg_namespace nsp on nsp.oid = cls.relnamespace
-      join pg_publication pub on pub.oid = rel.prpubid
-      where pub.pubname = 'supabase_realtime'
-        and nsp.nspname = 'public'
-        and cls.relname = 'support_request_history'
-    ) then
-      alter publication supabase_realtime add table public.support_request_history;
-    end if;
+  if table_oid is null then
+    return;
   end if;
-end
-$$ language plpgsql;
 
+  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    return;
+  end if;
+
+  if exists (
+    select 1
+    from pg_publication_rel rel
+    join pg_publication pub on pub.oid = rel.prpubid
+    where pub.pubname = 'supabase_realtime'
+      and rel.prrelid = table_oid
+  ) then
+    return;
+  end if;
+
+  execute format('alter publication supabase_realtime add table %s', table_oid);
+end;
+$realtime$;
+
+select pg_temp.add_public_realtime_table('profiles');
+select pg_temp.add_public_realtime_table('service_accounts');
+select pg_temp.add_public_realtime_table('support_requests');
+select pg_temp.add_public_realtime_table('support_messages');
+select pg_temp.add_public_realtime_table('support_request_history');
+select pg_temp.add_public_realtime_table('panel_products');
+select pg_temp.add_public_realtime_table('panel_product_special_prices');
+select pg_temp.add_public_realtime_table('panel_sales');
+
+alter table public.profiles enable row level security;
 alter table public.service_accounts enable row level security;
 alter table public.support_requests enable row level security;
 alter table public.support_messages enable row level security;
@@ -182,20 +113,19 @@ for select
 to authenticated
 using (buyer_id = auth.uid() or owner_id = auth.uid());
 
-do $$
+do $history$
 begin
   if to_regclass('public.support_request_history') is not null then
-    alter table public.support_request_history enable row level security;
-    alter table public.support_request_history replica identity full;
-
-    drop policy if exists "support_history_select_requester_or_owner" on public.support_request_history;
-    create policy "support_history_select_requester_or_owner"
-    on public.support_request_history
-    for select
-    to authenticated
-    using (requester_id = auth.uid() or owner_id = auth.uid());
+    execute 'alter table public.support_request_history enable row level security';
+    execute 'alter table public.support_request_history replica identity full';
+    execute 'drop policy if exists "support_history_select_requester_or_owner" on public.support_request_history';
+    execute 'create policy "support_history_select_requester_or_owner"
+      on public.support_request_history
+      for select
+      to authenticated
+      using (requester_id = auth.uid() or owner_id = auth.uid())';
   end if;
-end
-$$ language plpgsql;
+end;
+$history$ language plpgsql;
 
 commit;
