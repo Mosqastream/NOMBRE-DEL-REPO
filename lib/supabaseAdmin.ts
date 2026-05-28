@@ -2,19 +2,21 @@ import { createClient } from '@supabase/supabase-js'
 
 let adminClient: ReturnType<typeof createClient> | null = null
 
-const noStoreFetch: typeof fetch = (input, init) =>
-  fetch(input, {
+const noStoreFetch: typeof fetch = (input, init) => {
+  const headers = new Headers(init?.headers)
+
+  headers.set('Cache-Control', 'no-cache')
+  headers.set('Pragma', 'no-cache')
+
+  return fetch(input, {
     ...init,
     cache: 'no-store',
-    headers: {
-      ...(init?.headers || {}),
-      'Cache-Control': 'no-cache',
-      Pragma: 'no-cache',
-    },
+    headers,
     next: {
       revalidate: 0,
     },
   } as RequestInit & { next: { revalidate: number } })
+}
 
 export function getSupabaseAdmin() {
   if (adminClient) {
