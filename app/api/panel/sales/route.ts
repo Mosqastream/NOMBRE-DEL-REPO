@@ -28,12 +28,18 @@ export async function POST(request: NextRequest) {
       .update({ status } as never)
       .eq('id', saleId)
       .eq('owner_id', session.profile.id)
+      .select('id')
 
     if (updateResp.error) {
       throw new PanelApiError(updateResp.error.message, 500)
     }
 
-    return NextResponse.json({ message: 'Venta actualizada.' })
+    const updatedRows = (updateResp.data || []) as Array<{ id: string }>
+    if (updatedRows.length === 0) {
+      throw new PanelApiError('No se pudo actualizar la venta o ya no existe.', 404)
+    }
+
+    return NextResponse.json({ message: 'Venta actualizada.', saleId })
   } catch (error) {
     const status = error instanceof PanelApiError ? error.status : 500
     return NextResponse.json(

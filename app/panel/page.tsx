@@ -77,6 +77,17 @@ type ProductForm = {
   specialRows: ProductSpecialDraft[]
 }
 
+type PanelApiPayload = {
+  error?: string
+  message?: string
+  requestId?: string | null
+  accountId?: string
+  accounts?: PanelAccount[]
+  product?: PanelProduct
+  productId?: string
+  saleId?: string
+}
+
 type OwnerAccountFilter = 'todos' | 'vigentes' | 'por_vencer' | 'vencidas'
 
 const defaultIssueForm: SupportIssueForm = {
@@ -176,6 +187,33 @@ function removeAccountFromPayload(
         ...user,
         activeAccounts: nextAccounts.filter(account => account.status === 'activa').length,
         accounts: nextAccounts,
+      }
+    }),
+  })
+}
+
+function appendAccountsToPayload(
+  payload: PanelBootstrapPayload,
+  accounts: PanelAccount[]
+): PanelBootstrapPayload {
+  if (accounts.length === 0) return payload
+
+  return normalizePanelPayload({
+    ...payload,
+    accounts: [...accounts, ...(payload.accounts || []).filter(account => !accounts.some(item => item.id === account.id))],
+    allUsers: (payload.allUsers || []).map(user => {
+      const userNewAccounts = accounts.filter(account => account.assignedUserId === user.id)
+      if (userNewAccounts.length === 0) return user
+
+      const mergedAccounts = [
+        ...userNewAccounts,
+        ...(user.accounts || []).filter(account => !userNewAccounts.some(item => item.id === account.id)),
+      ]
+
+      return {
+        ...user,
+        activeAccounts: mergedAccounts.filter(account => account.status === 'activa').length,
+        accounts: mergedAccounts,
       }
     }),
   })
@@ -664,11 +702,7 @@ export default function PanelPage() {
       body: JSON.stringify(body),
     })
 
-    const payload = (await response.json().catch(() => ({}))) as {
-      error?: string
-      message?: string
-      requestId?: string | null
-    }
+    const payload = (await response.json().catch(() => ({}))) as PanelApiPayload
 
     if (!response.ok || payload.error) {
       throw new Error(payload.error || 'No se pudo completar la accion.')
@@ -915,12 +949,20 @@ export default function PanelPage() {
     setSaving(true)
     setError('')
     try {
+      if (!assignUserId) {
+        throw new Error('Selecciona un usuario para asignarle la cuenta.')
+      }
+
       const emails = assignForm.emailsText
         .split(/[\n,]+/)
         .map(item => item.trim().toLowerCase())
         .filter(Boolean)
 
-      await callPanelApi('/api/panel/accounts', {
+      if (emails.length === 0) {
+        throw new Error('Agrega al menos un correo para asignar.')
+      }
+
+      const payload = await callPanelApi('/api/panel/accounts', {
         action: 'assign',
         userId: assignUserId,
         emails,
@@ -932,12 +974,20 @@ export default function PanelPage() {
         status: 'activa',
       })
 
+      if (payload.accounts?.length) {
+        for (const account of payload.accounts) {
+          removedAccountIdsRef.current.delete(account.id)
+        }
+        setPanelData(current => (current ? appendAccountsToPayload(current, payload.accounts || []) : current))
+        setExpandedUserId(assignUserId)
+      }
+
       setAssignOpen(false)
       setAssignForm(defaultAssignForm)
       setAssignSearch('')
       setAssignUserId('')
-      setNotice('Cuenta asignada.')
-      await refreshPanel()
+      setNotice(payload.message || 'Cuenta asignada.')
+      await refreshPanel(true)
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'No se pudo asignar la cuenta.')
     } finally {
@@ -2645,7 +2695,13 @@ export default function PanelPage() {
                   className={styles.input}
                   placeholder='Precio de renovacion'
                   value={assignForm.renewalPrice}
-                  onChange={event => setAssignForm(current => ({ ...current, renewalPrice: event.target.value }))}
+                  inputMode='decimal'
+                  onChange={event =>
+                    setAssignForm(current => ({
+                      ...current,
+                      renewalPrice: sanitizeNumericInput(event.target.value),
+                    }))
+                  }
                 />
               </div>
               <textarea
@@ -2654,7 +2710,12 @@ export default function PanelPage() {
                 value={assignForm.emailsText}
                 onChange={event => setAssignForm(current => ({ ...current, emailsText: event.target.value }))}
               />
-              <button type='button' className={styles.primaryButton} onClick={() => void submitAssign()}>
+              <button
+                type='button'
+                className={styles.primaryButton}
+                onClick={() => void submitAssign()}
+                disabled={saving}
+              >
                 Guardar asignacion
               </button>
             </div>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PanelApiError, requirePanelSession } from '@/lib/panel-auth'
+import type { PanelAccount, ServiceAccountStatus } from '@/lib/panel-types'
 import { normalizeDataUrlImage, parseMoney, parseNullableDate } from '@/lib/panel-utils'
 
 export const runtime = 'nodejs'
@@ -9,7 +10,55 @@ type AccountRow = {
   id: string
   owner_id: string
   assigned_user_id: string
+  service_name?: string
+  account_email?: string
+  account_type?: string
+  cutoff_date?: string | null
   renewal_price: number | string
+  renewal_period_days?: number
+  status?: ServiceAccountStatus
+  created_at?: string
+  updated_at?: string
+}
+
+type ProfileMiniRow = {
+  id: string
+  username: string
+}
+
+const ACCOUNT_STATUSES = new Set<ServiceAccountStatus>(['activa', 'pausada', 'sin_pago', 'desactivada'])
+
+const getDaysRemaining = (cutoffDate: string | null | undefined) => {
+  if (!cutoffDate) return null
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
+  const cutoff = new Date(`${cutoffDate}T00:00:00`)
+  if (Number.isNaN(cutoff.getTime())) return null
+  return Math.ceil((cutoff.getTime() - startOfToday.getTime()) / 86400000)
+}
+
+function mapAssignedAccount(params: {
+  row: Required<Pick<AccountRow, 'id' | 'owner_id' | 'assigned_user_id'>> & AccountRow
+  ownerUsername: string
+}): PanelAccount {
+  return {
+    id: params.row.id,
+    serviceName: params.row.service_name || 'Netflix',
+    accountEmail: params.row.account_email || '',
+    accountType: params.row.account_type || 'Cuenta completa',
+    ownerId: params.row.owner_id,
+    ownerUsername: params.ownerUsername,
+    assignedUserId: params.row.assigned_user_id,
+    cutoffDate: params.row.cutoff_date || null,
+    renewalPrice: parseMoney(params.row.renewal_price, 0),
+    renewalPeriodDays: Number(params.row.renewal_period_days || 30),
+    status: ACCOUNT_STATUSES.has(params.row.status as ServiceAccountStatus)
+      ? (params.row.status as ServiceAccountStatus)
+      : 'activa',
+    createdAt: params.row.created_at || new Date().toISOString(),
+    updatedAt: params.row.updated_at || new Date().toISOString(),
+    daysRemaining: getDaysRemaining(params.row.cutoff_date),
+  }
 }
 
 async function ensureNoActiveSupportRequest(
@@ -59,15 +108,19 @@ export async function POST(request: NextRequest) {
     if (action === 'assign') {
       const session = await requirePanelSession(request, true)
       const userId = String(body.userId || '').trim()
-      const emails = Array.isArray(body.emails)
-        ? body.emails.map(item => String(item || '').trim().toLowerCase()).filter(Boolean)
-        : []
+      const emails = Array.from(
+        new Set(
+          Array.isArray(body.emails)
+            ? body.emails.map(item => String(item || '').trim().toLowerCase()).filter(Boolean)
+            : []
+        )
+      )
       const serviceName = String(body.serviceName || 'Netflix').trim() || 'Netflix'
       const accountType = String(body.accountType || 'Cuenta completa').trim() || 'Cuenta completa'
       const cutoffDate = parseNullableDate(body.cutoffDate)
       const renewalPrice = parseMoney(body.renewalPrice, 0)
       const renewalPeriodDays = Math.max(1, Number(body.renewalPeriodDays || 30) || 30)
-      const status = String(body.status || 'activa').trim() || 'activa'
+      const status = String(body.status || 'activa').trim() as ServiceAccountStatus
 
       if (!userId) {
         throw new PanelApiError('Selecciona un usuario.', 400)
@@ -75,6 +128,25 @@ export async function POST(request: NextRequest) {
 
       if (emails.length === 0) {
         throw new PanelApiError('Agrega al menos un correo para asignar.', 400)
+      }
+
+      if (!ACCOUNT_STATUSES.has(status)) {
+        throw new PanelApiError('Estado de cuenta no valido.', 400)
+      }
+
+      const targetResp = await session.supabaseAdmin
+        .from('profiles')
+        .select('id, username')
+        .eq('id', userId)
+        .maybeSingle()
+
+      if (targetResp.error) {
+        throw new PanelApiError(targetResp.error.message, 500)
+      }
+
+      const targetUser = (targetResp.data || null) as ProfileMiniRow | null
+      if (!targetUser?.id) {
+        throw new PanelApiError('Ese usuario ya no existe en profiles.', 404)
       }
 
       const rows = emails.map(accountEmail => ({
@@ -87,21 +159,36 @@ export async function POST(request: NextRequest) {
         renewal_price: renewalPrice,
         renewal_period_days: renewalPeriodDays,
         status,
+        updated_at: new Date().toISOString(),
       }))
 
-      const insertResp = await session.supabaseAdmin
+      const upsertResp = await session.supabaseAdmin
         .from('service_accounts')
-        .insert(rows as never)
-        .select('id')
-      if (insertResp.error) {
-        throw new PanelApiError(insertResp.error.message, 500)
+        .upsert(rows as never, {
+          onConflict: 'assigned_user_id,service_name,account_email',
+        })
+        .select(
+          'id, owner_id, assigned_user_id, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
+        )
+
+      if (upsertResp.error) {
+        throw new PanelApiError(upsertResp.error.message, 500)
       }
 
-      const insertedRows = (insertResp.data || []) as Array<{ id: string }>
+      const savedRows = (upsertResp.data || []) as AccountRow[]
+      if (savedRows.length === 0) {
+        throw new PanelApiError('Supabase no devolvio cuentas guardadas.', 500)
+      }
 
       return NextResponse.json({
-        message: emails.length > 1 ? 'Cuentas asignadas.' : 'Cuenta asignada.',
-        ids: insertedRows.map(item => item.id),
+        message: savedRows.length > 1 ? 'Cuentas asignadas.' : 'Cuenta asignada.',
+        ids: savedRows.map(item => item.id),
+        accounts: savedRows.map(row =>
+          mapAssignedAccount({
+            row: row as Required<Pick<AccountRow, 'id' | 'owner_id' | 'assigned_user_id'>> & AccountRow,
+            ownerUsername: session.profile.username,
+          })
+        ),
       })
     }
 

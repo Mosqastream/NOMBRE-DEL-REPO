@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
     if (action === 'create') {
       const session = await requirePanelSession(request, true)
       const title = String(body.title || '').trim()
-      const providerName = String(body.providerName || session.profile.username).trim() || session.profile.username
+      const providerName = session.profile.username
       const price = parseMoney(body.price, 0)
       const imageDataUrl = normalizeDataUrlImage(body.imageDataUrl)
       const inStock = Boolean(body.inStock ?? true)
@@ -187,12 +187,18 @@ export async function POST(request: NextRequest) {
         .delete()
         .eq('id', productId)
         .eq('owner_id', session.profile.id)
+        .select('id')
 
       if (deleteResp.error) {
         throw new PanelApiError(deleteResp.error.message, 500)
       }
 
-      return NextResponse.json({ message: 'Producto eliminado.' })
+      const deletedRows = (deleteResp.data || []) as Array<{ id: string }>
+      if (deletedRows.length === 0) {
+        throw new PanelApiError('No se pudo borrar el producto o ya no existe.', 404)
+      }
+
+      return NextResponse.json({ message: 'Producto eliminado.', productId })
     }
 
     if (action === 'purchase') {
