@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { unstable_noStore as noStore } from 'next/cache'
 import { PanelApiError, requirePanelSession } from '@/lib/panel-auth'
 import { fetchPanelBootstrap } from '@/lib/panel-data'
 
@@ -6,6 +7,8 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
+  noStore()
+
   try {
     const session = await requirePanelSession(request)
     const payload = await fetchPanelBootstrap(session.supabaseAdmin, session.profile)

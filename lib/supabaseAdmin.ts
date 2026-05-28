@@ -2,6 +2,20 @@ import { createClient } from '@supabase/supabase-js'
 
 let adminClient: ReturnType<typeof createClient> | null = null
 
+const noStoreFetch: typeof fetch = (input, init) =>
+  fetch(input, {
+    ...init,
+    cache: 'no-store',
+    headers: {
+      ...(init?.headers || {}),
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+    },
+    next: {
+      revalidate: 0,
+    },
+  } as RequestInit & { next: { revalidate: number } })
+
 export function getSupabaseAdmin() {
   if (adminClient) {
     return adminClient
@@ -22,6 +36,9 @@ export function getSupabaseAdmin() {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+    },
+    global: {
+      fetch: noStoreFetch,
     },
   })
 
