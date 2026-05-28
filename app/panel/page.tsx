@@ -163,6 +163,24 @@ function normalizePanelPayload(payload: PanelBootstrapPayload): PanelBootstrapPa
   }
 }
 
+function removeAccountFromPayload(
+  payload: PanelBootstrapPayload,
+  accountId: string
+): PanelBootstrapPayload {
+  return normalizePanelPayload({
+    ...payload,
+    accounts: (payload.accounts || []).filter(account => account.id !== accountId),
+    allUsers: (payload.allUsers || []).map(user => {
+      const nextAccounts = (user.accounts || []).filter(account => account.id !== accountId)
+      return {
+        ...user,
+        activeAccounts: nextAccounts.filter(account => account.status === 'activa').length,
+        accounts: nextAccounts,
+      }
+    }),
+  })
+}
+
 function SectionIcon({ icon }: { icon: SectionIconName }) {
   if (icon === 'wallet') {
     return (
@@ -335,6 +353,10 @@ export default function PanelPage() {
   const [assignForm, setAssignForm] = useState<AssignForm>(defaultAssignForm)
   const [productForm, setProductForm] = useState<ProductForm>(defaultProductForm())
   const realtimeRefreshRef = useRef<number | null>(null)
+  const realtimePollRef = useRef<number | null>(null)
+  const refreshInFlightRef = useRef(false)
+  const refreshQueuedRef = useRef(false)
+  const removedAccountIdsRef = useRef(new Set<string>())
   const productCreatePendingRef = useRef(false)
 
   const profile = panelData?.profile ?? null
@@ -525,8 +547,14 @@ export default function PanelPage() {
 
       realtimeRefreshRef.current = window.setTimeout(() => {
         void refreshPanel(true)
-      }, 80)
+      }, 25)
     }
+
+    realtimePollRef.current = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void refreshPanel(true)
+      }
+    }, 2500)
 
     const channel = supabase
       .channel(`panel-live-${profile.id}`)
@@ -548,6 +576,9 @@ export default function PanelPage() {
       if (realtimeRefreshRef.current) {
         window.clearTimeout(realtimeRefreshRef.current)
       }
+      if (realtimePollRef.current) {
+        window.clearInterval(realtimePollRef.current)
+      }
       void supabase.removeChannel(channel)
     }
   }, [profile?.id])
@@ -563,6 +594,12 @@ export default function PanelPage() {
   }
 
   const refreshPanel = async (silent = false) => {
+    if (refreshInFlightRef.current) {
+      refreshQueuedRef.current = true
+      return
+    }
+
+    refreshInFlightRef.current = true
     if (!silent) {
       setLoading(true)
     }
@@ -585,7 +622,10 @@ export default function PanelPage() {
         throw new Error(payload.error || 'No se pudo cargar el panel.')
       }
 
-      const normalizedPayload = normalizePanelPayload(payload)
+      let normalizedPayload = normalizePanelPayload(payload)
+      for (const accountId of removedAccountIdsRef.current) {
+        normalizedPayload = removeAccountFromPayload(normalizedPayload, accountId)
+      }
       setPanelData(normalizedPayload)
       if (normalizedPayload.profile.role !== 'owner') {
         setPanelView('usuario')
@@ -595,6 +635,11 @@ export default function PanelPage() {
     } finally {
       if (!silent) {
         setLoading(false)
+      }
+      refreshInFlightRef.current = false
+      if (refreshQueuedRef.current) {
+        refreshQueuedRef.current = false
+        void refreshPanel(true)
       }
     }
   }
@@ -892,16 +937,28 @@ export default function PanelPage() {
   }
 
   const removeAccount = async (accountId: string) => {
+    const snapshot = panelData
     setSaving(true)
     setError('')
     try {
+      removedAccountIdsRef.current.add(accountId)
+      setPanelData(current => (current ? removeAccountFromPayload(current, accountId) : current))
+      setSupportChoiceAccount(current => (current?.id === accountId ? null : current))
+      setIssueAccount(current => (current?.id === accountId ? null : current))
+      setRenewalAccount(current => (current?.id === accountId ? null : current))
+
       await callPanelApi('/api/panel/accounts', {
         action: 'remove',
         accountId,
       })
       setNotice('Cuenta retirada.')
-      await refreshPanel()
+      await refreshPanel(true)
     } catch (submitError) {
+      removedAccountIdsRef.current.delete(accountId)
+      if (snapshot) {
+        setPanelData(snapshot)
+      }
+      void refreshPanel(true)
       setError(submitError instanceof Error ? submitError.message : 'No se pudo quitar la cuenta.')
     } finally {
       setSaving(false)

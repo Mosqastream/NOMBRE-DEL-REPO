@@ -8,3 +8,6 @@ build
 *.tsbuildinfo
 .telegram-bridge-session
 coigosnmetfg.lix
+
+.vercel
+.env*.local

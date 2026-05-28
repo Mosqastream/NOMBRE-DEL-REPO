@@ -117,12 +117,18 @@ export async function POST(request: NextRequest) {
         .delete()
         .eq('id', accountId)
         .eq('owner_id', session.profile.id)
+        .select('id')
 
       if (deleteResp.error) {
         throw new PanelApiError(deleteResp.error.message, 500)
       }
 
-      return NextResponse.json({ message: 'Cuenta retirada.' })
+      const deletedRows = (deleteResp.data || []) as Array<{ id: string }>
+      if (deletedRows.length === 0) {
+        throw new PanelApiError('No se pudo quitar la cuenta o ya fue retirada.', 404)
+      }
+
+      return NextResponse.json({ message: 'Cuenta retirada.', accountId })
     }
 
     const session = await requirePanelSession(request)
