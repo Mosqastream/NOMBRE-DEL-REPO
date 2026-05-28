@@ -40,6 +40,14 @@ function formatDate(value: string | null) {
   })
 }
 
+function getExternalLinkHtml(html: string) {
+  const withBase = html.includes('<head')
+    ? html.replace(/<head([^>]*)>/i, '<head$1><base target="_blank">')
+    : `<base target="_blank">${html}`
+
+  return withBase.replace(/<a\b(?![^>]*\btarget=)/gi, '<a target="_blank" rel="noreferrer noopener"')
+}
+
 export default function ClientesPage() {
   const [recipientInput, setRecipientInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -67,7 +75,7 @@ export default function ClientesPage() {
       a { color: #c1121f; }
     </style>
   </head>
-  <body>${selectedItem.bodyHtml}</body>
+  <body>${getExternalLinkHtml(selectedItem.bodyHtml)}</body>
 </html>`
     : ''
 
