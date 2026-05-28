@@ -550,11 +550,15 @@ export default function PanelPage() {
       }, 25)
     }
 
-    realtimePollRef.current = window.setInterval(() => {
+    const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') {
         void refreshPanel(true)
       }
-    }, 2500)
+    }
+
+    realtimePollRef.current = window.setInterval(refreshWhenVisible, 1000)
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
 
     const channel = supabase
       .channel(`panel-live-${profile.id}`)
@@ -579,6 +583,8 @@ export default function PanelPage() {
       if (realtimePollRef.current) {
         window.clearInterval(realtimePollRef.current)
       }
+      window.removeEventListener('focus', refreshWhenVisible)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
       void supabase.removeChannel(channel)
     }
   }, [profile?.id])
@@ -606,11 +612,13 @@ export default function PanelPage() {
     setError('')
     try {
       const token = await getAccessToken()
-      const response = await fetch('/api/panel/bootstrap', {
+      const response = await fetch(`/api/panel/bootstrap?ts=${Date.now()}`, {
         method: 'GET',
         cache: 'no-store',
         headers: {
           Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
         },
       })
 

@@ -9,14 +9,27 @@ export async function GET(request: NextRequest) {
   try {
     const session = await requirePanelSession(request)
     const payload = await fetchPanelBootstrap(session.supabaseAdmin, session.profile)
-    return NextResponse.json(payload)
+    return NextResponse.json(payload, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
+      },
+    })
   } catch (error) {
     const status = error instanceof PanelApiError ? error.status : 500
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : 'No se pudo cargar el panel.',
       },
-      { status }
+      {
+        status,
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+          Pragma: 'no-cache',
+          Expires: '0',
+        },
+      }
     )
   }
 }
