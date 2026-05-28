@@ -92,6 +92,14 @@ const extractFirstUrl = (value: string | null) => {
   return match?.[0] || null
 }
 
+const getExternalLinkHtml = (html: string) => {
+  const withBase = html.includes('<head')
+    ? html.replace(/<head([^>]*)>/i, '<head$1><base target="_blank">')
+    : `<base target="_blank">${html}`
+
+  return withBase.replace(/<a\b(?![^>]*\btarget=)/gi, '<a target="_blank" rel="noreferrer noopener"')
+}
+
 const getItemKey = (item: InboxItem) => item.message_id || `${item.source || 'local'}-${item.uid}-${item.date}`
 
 type CodigosPageProps = {
@@ -205,7 +213,7 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
 
     const recipientValue = recipient.trim()
     if (!recipientValue) {
-      setError('Ingresa el correo electronico que deseas consultar.')
+      setError('Escribe un correo.')
       return
     }
 
@@ -378,16 +386,6 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
                 <h2>Buscar correos</h2>
               </div>
 
-              <div className={styles.variantInfo}>
-                Solo puedes consultar correos que esten asignados a tu cuenta dentro del panel.
-              </div>
-
-              {visibleVariants.length > 0 && (
-                <div className={styles.variantInfo}>
-                  Busqueda unificada en: {visibleVariants.join(', ')}
-                </div>
-              )}
-
               <div
                 className={`${styles.searchForm} ${isSpecialNetflixFlow ? styles.searchFormSingle : ''}`}
               >
@@ -442,11 +440,7 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
                     ))}
                   </div>
                 </>
-              ) : (
-                <div className={styles.searchInfo}>
-                  Ingresa el correo electronico que deseas consultar.
-                </div>
-              )}
+              ) : null}
 
               {error && <div className={styles.errorMessage}>{error}</div>}
             </article>
@@ -505,11 +499,9 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
               <div className={styles.emptyState}>No se encontraron correos para ese destinatario.</div>
             )}
 
-            {!hasSearched && !error && (
+            {!hasSearched && !error && isSpecialNetflixFlow && (
               <div className={styles.idleHint}>
-                {isSpecialNetflixFlow
-                  ? 'Este correo especial usa Telegram. Elige una de las 4 opciones para consultar el ultimo mensaje del bot.'
-                  : 'Ingresa un correo y pulsa buscar para consultar los mensajes.'}
+                Este correo especial usa Telegram. Elige una de las 4 opciones para consultar el ultimo mensaje del bot.
               </div>
             )}
 
@@ -607,7 +599,7 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
                   <iframe
                     className={styles.detailFrame}
                     title={selectedItem.subject}
-                    srcDoc={selectedItem.body_html}
+                    srcDoc={getExternalLinkHtml(selectedItem.body_html)}
                     sandbox='allow-popups allow-popups-to-escape-sandbox'
                   />
                 ) : (

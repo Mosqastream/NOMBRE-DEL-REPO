@@ -1660,9 +1660,6 @@ export default function PanelPage() {
             <h3>Correos asignados y validos</h3>
           </div>
         </div>
-        <div className={styles.emptyCard}>
-          Aqui solo aparecen los correos que tengas asignados dentro de tus cuentas activas.
-        </div>
         <div className={styles.codesWrap}>
           <CodigosWorkspace embedded />
         </div>
