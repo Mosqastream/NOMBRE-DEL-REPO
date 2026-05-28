@@ -287,47 +287,79 @@ export async function fetchPanelBootstrap(
   const profiles = (profilesResp.data || []) as ProfileMiniRow[]
   const profilesById = new Map(profiles.map(item => [item.id, item]))
 
-  const [accountsResp, requestsResp, messagesResp, productsResp, specialPricesResp, salesResp, historyResp] =
+  const accountSelect =
+    'id, owner_id, assigned_user_id, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
+  const requestSelect =
+    'id, account_id, requester_id, owner_id, request_kind, status, subject, description, payment_proof_data_url, renewal_price, created_at, updated_at'
+  const saleSelect =
+    'id, product_id, buyer_id, owner_id, title_snapshot, provider_name_snapshot, price_paid, status, payment_proof_data_url, created_at, updated_at'
+  const historySelect =
+    'id, account_email, service_name, requester_id, owner_id, request_kind, subject, description, summary, message_count, last_message_preview, closed_by_id, created_at, closed_at'
+
+  const accountsQuery = supabaseAdmin
+    .from('service_accounts')
+    .select(accountSelect)
+    .order('created_at', { ascending: false })
+
+  const requestsQuery = supabaseAdmin
+    .from('support_requests')
+    .select(requestSelect)
+    .order('created_at', { ascending: false })
+
+  const productsQuery = supabaseAdmin
+    .from('panel_products')
+    .select('id, owner_id, provider_name, title, price, image_data_url, in_stock, created_at, updated_at')
+    .order('created_at', { ascending: false })
+
+  const salesQuery = supabaseAdmin
+    .from('panel_sales')
+    .select(saleSelect)
+    .order('created_at', { ascending: false })
+
+  const historyQuery = supabaseAdmin
+    .from('support_request_history')
+    .select(historySelect)
+    .order('closed_at', { ascending: false })
+
+  const visibleAccountsQuery =
+    profile.role === 'owner'
+      ? accountsQuery.or(`owner_id.eq.${profile.id},assigned_user_id.eq.${profile.id}`)
+      : accountsQuery.eq('assigned_user_id', profile.id)
+
+  const visibleRequestsQuery =
+    profile.role === 'owner'
+      ? requestsQuery.or(`owner_id.eq.${profile.id},requester_id.eq.${profile.id}`)
+      : requestsQuery.eq('requester_id', profile.id)
+
+  const visibleProductsQuery =
+    profile.role === 'owner'
+      ? productsQuery.or(`owner_id.eq.${profile.id},in_stock.eq.true`)
+      : productsQuery.eq('in_stock', true)
+
+  const visibleSalesQuery =
+    profile.role === 'owner'
+      ? salesQuery.or(`owner_id.eq.${profile.id},buyer_id.eq.${profile.id}`)
+      : salesQuery.eq('buyer_id', profile.id)
+
+  const visibleHistoryQuery =
+    profile.role === 'owner'
+      ? historyQuery.or(`owner_id.eq.${profile.id},requester_id.eq.${profile.id}`)
+      : historyQuery.eq('requester_id', profile.id)
+
+  const [accountsResp, requestsResp, productsResp, specialPricesResp, salesResp, historyResp] =
     await Promise.all([
-    supabaseAdmin
-      .from('service_accounts')
-      .select(
-        'id, owner_id, assigned_user_id, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
-      )
-      .order('created_at', { ascending: false }),
-    supabaseAdmin
-      .from('support_requests')
-      .select(
-        'id, account_id, requester_id, owner_id, request_kind, status, subject, description, payment_proof_data_url, renewal_price, created_at, updated_at'
-      )
-      .order('created_at', { ascending: false }),
-    supabaseAdmin
-      .from('support_messages')
-      .select('id, request_id, sender_id, sender_role, body, image_data_url, created_at')
-      .order('created_at', { ascending: true }),
-    supabaseAdmin
-      .from('panel_products')
-      .select('id, owner_id, provider_name, title, price, image_data_url, in_stock, created_at, updated_at')
-      .order('created_at', { ascending: false }),
-    supabaseAdmin
-      .from('panel_product_special_prices')
-      .select('product_id, user_id, special_price, created_at')
-      .order('created_at', { ascending: false }),
-    supabaseAdmin
-      .from('panel_sales')
-      .select(
-        'id, product_id, buyer_id, owner_id, title_snapshot, provider_name_snapshot, price_paid, status, payment_proof_data_url, created_at, updated_at'
-      )
-      .order('created_at', { ascending: false }),
-    supabaseAdmin
-      .from('support_request_history')
-      .select(
-        'id, account_email, service_name, requester_id, owner_id, request_kind, subject, description, summary, message_count, last_message_preview, closed_by_id, created_at, closed_at'
-      )
-      .order('closed_at', { ascending: false }),
+      visibleAccountsQuery,
+      visibleRequestsQuery,
+      visibleProductsQuery,
+      supabaseAdmin
+        .from('panel_product_special_prices')
+        .select('product_id, user_id, special_price, created_at')
+        .order('created_at', { ascending: false }),
+      visibleSalesQuery,
+      visibleHistoryQuery,
     ])
 
-  for (const response of [accountsResp, requestsResp, messagesResp, productsResp, specialPricesResp, salesResp, historyResp]) {
+  for (const response of [accountsResp, requestsResp, productsResp, specialPricesResp, salesResp, historyResp]) {
     if (response.error) {
       throw new Error(response.error.message)
     }
@@ -338,6 +370,21 @@ export async function fetchPanelBootstrap(
   )
   const accountsById = new Map(accounts.map(item => [item.id, item]))
 
+  const requestRows = (requestsResp.data || []) as RequestRow[]
+  const requestIds = requestRows.map(row => row.id)
+  const messagesResp =
+    requestIds.length > 0
+      ? await supabaseAdmin
+          .from('support_messages')
+          .select('id, request_id, sender_id, sender_role, body, image_data_url, created_at')
+          .in('request_id', requestIds)
+          .order('created_at', { ascending: true })
+      : { data: [], error: null }
+
+  if (messagesResp.error) {
+    throw new Error(messagesResp.error.message)
+  }
+
   const messagesByRequestId = new Map<string, PanelSupportMessage[]>()
   for (const row of (messagesResp.data || []) as MessageRow[]) {
     const mapped = mapMessage(row, profilesById)
@@ -347,7 +394,7 @@ export async function fetchPanelBootstrap(
   }
 
   const supportRequests = uniqueById(
-    ((requestsResp.data || []) as RequestRow[]).map(row =>
+    requestRows.map(row =>
       mapRequest({
         row,
         profilesById,
@@ -380,31 +427,6 @@ export async function fetchPanelBootstrap(
     ((historyResp.data || []) as SupportHistoryRow[]).map(row => mapHistory(row, profilesById))
   )
 
-  const visibleAccounts =
-    profile.role === 'owner'
-      ? accounts.filter(item => item.ownerId === profile.id || item.assignedUserId === profile.id)
-      : accounts.filter(item => item.assignedUserId === profile.id)
-
-  const visibleRequests =
-    profile.role === 'owner'
-      ? supportRequests.filter(item => item.ownerId === profile.id || item.requesterId === profile.id)
-      : supportRequests.filter(item => item.requesterId === profile.id)
-
-  const visibleProducts =
-    profile.role === 'owner'
-      ? products.filter(item => item.ownerId === profile.id || item.inStock)
-      : products.filter(item => item.inStock)
-
-  const visibleSales =
-    profile.role === 'owner'
-      ? sales.filter(item => item.ownerId === profile.id || item.buyerId === profile.id)
-      : sales.filter(item => item.buyerId === profile.id)
-
-  const visibleHistory =
-    profile.role === 'owner'
-      ? supportHistory.filter(item => item.ownerId === profile.id || item.requesterId === profile.id)
-      : supportHistory.filter(item => item.requesterId === profile.id)
-
   const allUsers: PanelOwnerUser[] =
     profile.role === 'owner'
       ? profiles.map(item => {
@@ -426,11 +448,11 @@ export async function fetchPanelBootstrap(
 
   return {
     profile,
-    accounts: visibleAccounts,
-    supportRequests: visibleRequests,
-    supportHistory: visibleHistory,
-    products: visibleProducts,
-    sales: visibleSales,
+    accounts,
+    supportRequests,
+    supportHistory,
+    products,
+    sales,
     allUsers,
   }
 }
