@@ -111,6 +111,21 @@ async function ensureNoActiveSupportRequest(
   }
 }
 
+const getBranchIds = (rows: AccountRow[], startId: string) => {
+  const ids = new Set<string>([startId])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const row of rows) {
+      if (row.parent_account_id && ids.has(row.parent_account_id) && !ids.has(row.id)) {
+        ids.add(row.id)
+        changed = true
+      }
+    }
+  }
+  return Array.from(ids)
+}
+
 const normalizeHeader = (value: unknown) =>
   String(value || '')
     .normalize('NFD')
@@ -567,7 +582,7 @@ export async function POST(request: NextRequest) {
 
       const accountChainResp = await session.supabaseAdmin
         .from('service_accounts')
-        .select('id, owner_id, assigned_by_id, root_account_id')
+        .select('id, owner_id, assigned_by_id, parent_account_id, root_account_id')
         .eq('id', accountId)
         .maybeSingle()
 
@@ -579,6 +594,7 @@ export async function POST(request: NextRequest) {
         id: string
         owner_id: string
         assigned_by_id?: string | null
+        parent_account_id?: string | null
         root_account_id?: string | null
       } | null
 
@@ -591,10 +607,25 @@ export async function POST(request: NextRequest) {
       }
 
       const rootAccountId = accountChain.root_account_id || accountChain.id
+      const scopeResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .select('id, parent_account_id, root_account_id')
+        .or(`id.eq.${rootAccountId},root_account_id.eq.${rootAccountId}`)
+
+      if (scopeResp.error) {
+        throw new PanelApiError(scopeResp.error.message, 500)
+      }
+
+      const scopedRows = (scopeResp.data || []) as AccountRow[]
+      const idsToDelete =
+        accountChain.owner_id === session.profile.id
+          ? scopedRows.map(row => row.id)
+          : getBranchIds(scopedRows, accountId)
+
       const deleteResp = await session.supabaseAdmin
         .from('service_accounts')
         .delete()
-        .or(`id.eq.${accountId},parent_account_id.eq.${accountId}${accountChain.owner_id === session.profile.id ? `,root_account_id.eq.${rootAccountId}` : ''}`)
+        .in('id', idsToDelete)
         .select('id')
 
       if (deleteResp.error) {
@@ -610,11 +641,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'update') {
-      const session = await requirePanelSession(request, true)
+      const session = await requirePanelSession(request)
       const accountId = String(body.accountId || '').trim()
       const nextEmail = String(body.nextEmail || '').trim().toLowerCase()
-      const serviceName = String(body.serviceName || 'Netflix').trim() || 'Netflix'
-      const accountType = String(body.accountType || 'Cuenta completa').trim() || 'Cuenta completa'
       const cutoffDate = parseNullableDate(body.cutoffDate)
       const renewalPrice = parseMoney(body.renewalPrice, 0)
       const renewalPeriodDays = Math.max(1, Number(body.renewalPeriodDays || 30) || 30)
@@ -624,10 +653,6 @@ export async function POST(request: NextRequest) {
         throw new PanelApiError('Cuenta no valida.', 400)
       }
 
-      if (!nextEmail || !nextEmail.includes('@')) {
-        throw new PanelApiError('Ingresa un correo valido.', 400)
-      }
-
       if (!ACCOUNT_STATUSES.has(status)) {
         throw new PanelApiError('Estado de cuenta no valido.', 400)
       }
@@ -635,10 +660,9 @@ export async function POST(request: NextRequest) {
       const accountResp = await session.supabaseAdmin
         .from('service_accounts')
         .select(
-          'id, owner_id, assigned_user_id, root_account_id, account_email, service_name, account_type, cutoff_date, renewal_price, renewal_period_days, status'
+          'id, owner_id, assigned_user_id, assigned_by_id, parent_account_id, root_account_id, account_email, service_name, account_type, cutoff_date, renewal_price, renewal_period_days, status'
         )
         .eq('id', accountId)
-        .eq('owner_id', session.profile.id)
         .maybeSingle()
 
       if (accountResp.error) {
@@ -650,13 +674,41 @@ export async function POST(request: NextRequest) {
         throw new PanelApiError('No se encontro la cuenta para editar.', 404)
       }
 
+      const isOwnerEditor = account.owner_id === session.profile.id && session.profile.role === 'owner'
+      const isDelegatedEditor = account.assigned_by_id === session.profile.id
+      if (!isOwnerEditor && !isDelegatedEditor) {
+        throw new PanelApiError('No puedes editar esta cuenta.', 403)
+      }
+
+      if (isOwnerEditor && (!nextEmail || !nextEmail.includes('@'))) {
+        throw new PanelApiError('Ingresa un correo valido.', 400)
+      }
+
+      const serviceName = isOwnerEditor
+        ? String(body.serviceName || account.service_name || 'Netflix').trim() || 'Netflix'
+        : account.service_name || 'Netflix'
+      const accountType = isOwnerEditor
+        ? String(body.accountType || account.account_type || 'Cuenta completa').trim() || 'Cuenta completa'
+        : account.account_type || 'Cuenta completa'
+      const accountEmail = isOwnerEditor ? nextEmail : account.account_email || ''
       const rootAccountId = account.root_account_id || account.id
+      const scopeResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .select('id, parent_account_id, root_account_id')
+        .or(`id.eq.${rootAccountId},root_account_id.eq.${rootAccountId}`)
+
+      if (scopeResp.error) {
+        throw new PanelApiError(scopeResp.error.message, 500)
+      }
+
+      const scopedRows = (scopeResp.data || []) as AccountRow[]
+      const idsToUpdate = isOwnerEditor ? scopedRows.map(row => row.id) : getBranchIds(scopedRows, accountId)
       const now = new Date().toISOString()
       const updateResp = await session.supabaseAdmin
         .from('service_accounts')
         .update({
           service_name: serviceName,
-          account_email: nextEmail,
+          account_email: accountEmail,
           account_type: accountType,
           cutoff_date: cutoffDate,
           renewal_price: renewalPrice,
@@ -664,8 +716,7 @@ export async function POST(request: NextRequest) {
           status,
           updated_at: now,
         } as never)
-        .eq('owner_id', session.profile.id)
-        .or(`id.eq.${rootAccountId},root_account_id.eq.${rootAccountId}`)
+        .in('id', idsToUpdate)
         .select(
           'id, owner_id, assigned_user_id, assigned_by_id, parent_account_id, root_account_id, assignment_depth, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
         )
@@ -679,16 +730,22 @@ export async function POST(request: NextRequest) {
         throw new PanelApiError('No se actualizo ninguna cuenta.', 404)
       }
 
-      const requesterIds = Array.from(new Set(updatedRows.map(row => row.assigned_user_id).filter(Boolean)))
+      const requesterIds = Array.from(
+        new Set([session.profile.id, ...updatedRows.map(row => row.assigned_user_id)].filter(Boolean))
+      )
       const historyRows = requesterIds.map(requesterId => ({
-        account_email: nextEmail,
+        account_email: accountEmail,
         service_name: serviceName,
         requester_id: requesterId,
-        owner_id: session.profile.id,
+        owner_id: account.owner_id,
         request_kind: 'issue',
         subject: 'Cuenta actualizada',
-        description: `Se actualizo la cuenta ${account.account_email || 'anterior'} por ${nextEmail}.`,
-        summary: `Cuenta actualizada: ${account.account_email || 'anterior'} -> ${nextEmail}`,
+        description: isOwnerEditor
+          ? `Se actualizo la cuenta ${account.account_email || 'anterior'} por ${accountEmail}.`
+          : `Se actualizo fecha de corte o datos de renovacion de ${serviceName}.`,
+        summary: isOwnerEditor
+          ? `Cuenta actualizada: ${account.account_email || 'anterior'} -> ${accountEmail}`
+          : `Datos de cuenta actualizados por ${session.profile.username}.`,
         message_count: 0,
         last_message_preview: `El proveedor actualizo datos de ${serviceName}.`,
         closed_by_id: session.profile.id,
@@ -704,7 +761,7 @@ export async function POST(request: NextRequest) {
         accounts: updatedRows.map(row =>
           mapAssignedAccount({
             row: row as Required<Pick<AccountRow, 'id' | 'owner_id' | 'assigned_user_id'>> & AccountRow,
-            ownerUsername: session.profile.username,
+            ownerUsername: isOwnerEditor ? session.profile.username : 'owner',
           })
         ),
       })

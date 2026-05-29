@@ -547,6 +547,10 @@ export default function PanelPage() {
   const [expandedUserId, setExpandedUserId] = useState<string | null>('all')
   const [ownerUserSearch, setOwnerUserSearch] = useState('')
   const [ownerAccountSearch, setOwnerAccountSearch] = useState('')
+  const [childUserSearch, setChildUserSearch] = useState('')
+  const [childExpandedUserId, setChildExpandedUserId] = useState<string | null>('all')
+  const [childAccountSearch, setChildAccountSearch] = useState('')
+  const [childAccountFilter, setChildAccountFilter] = useState<OwnerAccountFilter>('todos')
   const [ownerAccountFilter, setOwnerAccountFilter] = useState<OwnerAccountFilter>('todos')
   const [userAccountFilter, setUserAccountFilter] = useState<UserAccountFilter>('todos')
   const [supportChoiceAccount, setSupportChoiceAccount] = useState<PanelAccount | null>(null)
@@ -593,6 +597,7 @@ export default function PanelPage() {
 
   const profile = panelData?.profile ?? null
   const panelRole: PanelRole = profile?.role || 'usuario'
+  const canEditAccountIdentity = panelRole === 'owner' && panelView === 'owner'
 
   const getCurrentPage = (key: string, totalItems: number) => {
     const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE))
@@ -716,6 +721,13 @@ export default function PanelPage() {
 
   const childUsers = useMemo(() => panelData?.allUsers || [], [panelData?.allUsers])
 
+  const filteredChildUsers = useMemo(() => {
+    const term = childUserSearch.trim().toLowerCase()
+    return childUsers
+      .filter(user => (!term ? true : user.username.toLowerCase().includes(term)))
+      .sort((left, right) => right.activeAccounts - left.activeAccounts)
+  }, [childUserSearch, childUsers])
+
   const childAssignableUsers = useMemo(() => {
     const term = childAssignSearch.trim().toLowerCase()
     if (!term) return childUsers
@@ -736,6 +748,52 @@ export default function PanelPage() {
     () => ownPanelAccounts.find(account => account.id === childAssignAccountId) || null,
     [childAssignAccountId, ownPanelAccounts]
   )
+
+  const childAllAccounts = useMemo(
+    () =>
+      childUsers
+        .flatMap(user => user.accounts.map(account => ({ ...account, clientUsername: user.username })))
+        .sort((left, right) => {
+          const leftDays = getSafeDaysRemaining(left.daysRemaining) ?? 9999
+          const rightDays = getSafeDaysRemaining(right.daysRemaining) ?? 9999
+          return leftDays - rightDays
+        }),
+    [childUsers]
+  )
+
+  const selectedChildUser =
+    childExpandedUserId && childExpandedUserId !== 'all'
+      ? childUsers.find(user => user.id === childExpandedUserId) || null
+      : null
+
+  const filteredChildAccounts = useMemo(() => {
+    const baseAccounts =
+      childExpandedUserId === 'all'
+        ? childAllAccounts
+        : (selectedChildUser?.accounts || []).map(account => ({
+            ...account,
+            clientUsername: selectedChildUser?.username || 'usuario',
+          }))
+
+    return baseAccounts.filter(account => {
+      const term = childAccountSearch.trim().toLowerCase()
+      if (
+        term &&
+        ![account.accountEmail, account.clientUsername, account.serviceName, account.ownerUsername]
+          .join(' ')
+          .toLowerCase()
+          .includes(term)
+      ) {
+        return false
+      }
+
+      const safeDays = getSafeDaysRemaining(account.daysRemaining)
+      if (childAccountFilter === 'vigentes') return safeDays !== null && safeDays > 7
+      if (childAccountFilter === 'por_vencer') return safeDays !== null && safeDays > 0 && safeDays <= 7
+      if (childAccountFilter === 'vencidas') return safeDays !== null && safeDays <= 0
+      return true
+    })
+  }, [childAccountFilter, childAccountSearch, childAllAccounts, childExpandedUserId, selectedChildUser])
 
   const assignHasInlineData = assignForm.emailsText.includes('|')
   const assignHasInlineUsers = assignForm.emailsText
@@ -2451,63 +2509,189 @@ export default function PanelPage() {
     </div>
   )
 
-  const renderGestionSection = () => (
-    <div className={styles.sectionStack}>
-      <div className={styles.blockCard}>
-        <div className={styles.blockHeader}>
-          <div>
-            <span className={styles.blockEyebrow}>Usuarios</span>
-            <h3>Subclientes</h3>
+  const renderGestionSection = () => {
+    const usersPageKey = 'child-users'
+    const accountsPageKey = `child-accounts-${childExpandedUserId}-${childAccountFilter}`
+    const pageChildUsers = getPageItems(usersPageKey, filteredChildUsers)
+    const pageChildAccounts = getPageItems(accountsPageKey, filteredChildAccounts)
+
+    return (
+      <div className={styles.sectionStack}>
+        <div className={styles.ownerUsersLayout}>
+          <div className={styles.blockCard}>
+            <div className={styles.blockHeader}>
+              <div>
+                <span className={styles.blockEyebrow}>Usuarios</span>
+                <h3>Mis usuarios</h3>
+              </div>
+              <div className={styles.inlineActions}>
+                <button type='button' className={styles.secondaryButton} onClick={() => setChildAssignOpen(true)}>
+                  Asignar cuenta
+                </button>
+                <button type='button' className={styles.primaryButton} onClick={() => setPendingUserOpen(true)}>
+                  Crear usuario
+                </button>
+              </div>
+            </div>
+
+            <div className={styles.ownerUserRail}>
+              <input
+                className={styles.input}
+                placeholder='Buscar usuario'
+                value={childUserSearch}
+                onChange={event => setChildUserSearch(event.target.value)}
+              />
+
+              <div className={styles.ownerUserList}>
+                <button
+                  type='button'
+                  className={childExpandedUserId === 'all' ? styles.ownerUserOptionActive : styles.ownerUserOption}
+                  onClick={() => setChildExpandedUserId('all')}
+                >
+                  <div className={styles.ownerUserMain}>
+                    <strong>Todos</strong>
+                  </div>
+                  <strong className={styles.ownerUserCount}>({childAllAccounts.length})</strong>
+                </button>
+
+                {filteredChildUsers.length === 0 ? (
+                  <div className={styles.emptyCard}>Crea usuarios pendientes y pasales /subcliente.</div>
+                ) : (
+                  pageChildUsers.map(user => (
+                    <button
+                      key={user.id}
+                      type='button'
+                      className={
+                        childExpandedUserId === user.id ? styles.ownerUserOptionActive : styles.ownerUserOption
+                      }
+                      onClick={() => setChildExpandedUserId(user.id)}
+                    >
+                      <div className={styles.ownerUserMain}>
+                        <strong>{user.username}</strong>
+                      </div>
+                      <strong className={styles.ownerUserCount}>({user.accounts.length})</strong>
+                    </button>
+                  ))
+                )}
+                {renderPagination(usersPageKey, filteredChildUsers.length)}
+              </div>
+            </div>
           </div>
-          <div className={styles.inlineActions}>
-            <button type='button' className={styles.secondaryButton} onClick={() => setChildAssignOpen(true)}>
-              Asignar cuenta
-            </button>
-            <button type='button' className={styles.primaryButton} onClick={() => setPendingUserOpen(true)}>
-              Crear usuario
-            </button>
+
+          <div className={styles.blockCard}>
+            <div className={styles.ownerPanelHeader}>
+              <div>
+                <span className={styles.blockEyebrow}>
+                  {childExpandedUserId === 'all' ? 'General' : 'Cliente'}
+                </span>
+                <h3>
+                  {childExpandedUserId === 'all'
+                    ? 'Cuentas asignadas a tus usuarios'
+                    : `Cuentas de ${selectedChildUser?.username || 'usuario'}`}
+                </h3>
+              </div>
+              <div className={styles.inlineTabs}>
+                <button
+                  type='button'
+                  className={childAccountFilter === 'todos' ? styles.tabActive : styles.tabButton}
+                  onClick={() => setChildAccountFilter('todos')}
+                >
+                  Todos
+                </button>
+                <button
+                  type='button'
+                  className={childAccountFilter === 'vigentes' ? styles.tabActive : styles.tabButton}
+                  onClick={() => setChildAccountFilter('vigentes')}
+                >
+                  Vigentes
+                </button>
+                <button
+                  type='button'
+                  className={childAccountFilter === 'por_vencer' ? styles.tabActive : styles.tabButton}
+                  onClick={() => setChildAccountFilter('por_vencer')}
+                >
+                  7 dias o menos
+                </button>
+                <button
+                  type='button'
+                  className={childAccountFilter === 'vencidas' ? styles.tabActive : styles.tabButton}
+                  onClick={() => setChildAccountFilter('vencidas')}
+                >
+                  Vencidas
+                </button>
+              </div>
+            </div>
+
+            <div className={styles.ownerAccountTools}>
+              <input
+                className={styles.input}
+                placeholder='Buscar por correo, cliente o servicio'
+                value={childAccountSearch}
+                onChange={event => setChildAccountSearch(event.target.value)}
+              />
+            </div>
+
+            {filteredChildAccounts.length === 0 ? (
+              <div className={styles.emptyCard}>No hay cuentas para ese filtro.</div>
+            ) : (
+              <>
+                <div className={styles.tableWrap}>
+                  <table className={styles.table}>
+                    <thead>
+                      <tr>
+                        <th>Servicio</th>
+                        <th>Correo</th>
+                        <th>Cliente</th>
+                        <th>Propietario</th>
+                        <th>Corte</th>
+                        <th>Dias</th>
+                        <th>Estado</th>
+                        <th>Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageChildAccounts.map(account => (
+                        <tr key={account.id}>
+                          <td>{account.serviceName}</td>
+                          <td>{account.accountEmail}</td>
+                          <td>{account.clientUsername}</td>
+                          <td>{account.ownerUsername}</td>
+                          <td>{formatDate(account.cutoffDate)}</td>
+                          <td>{renderDaysBadge(account.daysRemaining)}</td>
+                          <td>{renderStatusBadge(account.status)}</td>
+                          <td>
+                            <div className={styles.inlineActions}>
+                              <button
+                                type='button'
+                                className={styles.iconActionButton}
+                                title='Editar datos'
+                                onClick={() => openEditAccount(account)}
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                type='button'
+                                className={styles.iconDangerButton}
+                                title='Quitar cuenta'
+                                onClick={() => void removeAccount(account.id)}
+                              >
+                                🗑️
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {renderPagination(accountsPageKey, filteredChildAccounts.length)}
+              </>
+            )}
           </div>
         </div>
-        {childUsers.length === 0 ? (
-          <div className={styles.emptyCard}>Crea un usuario pendiente y pasale /subcliente para que termine su registro.</div>
-        ) : (
-          <div className={styles.subclientGrid}>
-            {childUsers.map(user => (
-              <article key={user.id} className={styles.subclientCard}>
-                <div className={styles.subclientCardTop}>
-                  <div>
-                    <strong>{user.username}</strong>
-                    <span>{user.accounts.length} cuentas</span>
-                  </div>
-                  {user.onboardingStatus === 'pending' && <span className={styles.badgeWarning}>Pendiente</span>}
-                </div>
-                {user.accounts.length > 0 && (
-                  <div className={styles.subclientAccounts}>
-                    {user.accounts.map(account => (
-                      <div key={account.id} className={styles.subclientAccountRow}>
-                        <div>
-                          <strong>{account.serviceName}</strong>
-                          <span>{account.accountEmail}</span>
-                        </div>
-                        <button
-                          type='button'
-                          className={styles.ghostButton}
-                          onClick={() => void removeAccount(account.id)}
-                          disabled={saving}
-                        >
-                          Quitar
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </article>
-            ))}
-          </div>
-        )}
       </div>
-    </div>
-  )
+    )
+  }
 
   const renderHistorialSection = (ownerMode: boolean) => {
     const pageKey = ownerMode ? 'owner-history' : 'user-history'
@@ -4401,18 +4585,21 @@ export default function PanelPage() {
                 className={styles.input}
                 placeholder='Servicio'
                 value={editAccountForm.serviceName}
+                disabled={!canEditAccountIdentity}
                 onChange={event => setEditAccountForm(current => ({ ...current, serviceName: event.target.value }))}
               />
               <input
                 className={styles.input}
                 placeholder='Correo'
                 value={editAccountForm.accountEmail}
+                disabled={!canEditAccountIdentity}
                 onChange={event => setEditAccountForm(current => ({ ...current, accountEmail: event.target.value }))}
               />
               <input
                 className={styles.input}
                 placeholder='Tipo'
                 value={editAccountForm.accountType}
+                disabled={!canEditAccountIdentity}
                 onChange={event => setEditAccountForm(current => ({ ...current, accountType: event.target.value }))}
               />
               <label className={styles.fieldLabel}>
@@ -4459,7 +4646,9 @@ export default function PanelPage() {
                 <option value='desactivada'>Desactivada</option>
               </select>
               <div className={styles.assignHint}>
-                Este cambio se aplica a la cuenta principal y a todos sus subclientes.
+                {canEditAccountIdentity
+                  ? 'Este cambio se aplica a la cuenta principal y a todos sus subclientes.'
+                  : 'Solo puedes editar fecha, renovacion y estado para tus usuarios. El correo lo maneja el owner.'}
               </div>
               <button
                 type='button'
