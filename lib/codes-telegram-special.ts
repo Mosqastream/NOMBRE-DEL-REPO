@@ -14,6 +14,7 @@ export type SpecialNetflixActionKey =
   | 'update-household-link'
   | 'reset-password'
   | 'login-code'
+  | 'verification-code'
 
 export type SpecialNetflixAction = {
   key: SpecialNetflixActionKey
@@ -46,6 +47,12 @@ export const SPECIAL_NETFLIX_ACTIONS: SpecialNetflixAction[] = [
     label: 'Cod. Inicio Sesion',
     buttonNeedles: ['cod. inicio sesion', 'cod inicio sesion'],
     helperText: 'Pide el codigo de inicio de sesion y muestra el ultimo mensaje recibido.',
+  },
+  {
+    key: 'verification-code',
+    label: 'Cod. Verificacion',
+    buttonNeedles: ['cod. verificacion', 'cod verificacion', 'codigo de verificacion'],
+    helperText: 'Pide el codigo de verificacion y muestra el ultimo mensaje recibido.',
   },
 ]
 

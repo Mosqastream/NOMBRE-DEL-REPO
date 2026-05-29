@@ -20,6 +20,10 @@ const ACTIONS = {
     buttonNeedles: ['cod. inicio sesion', 'cod inicio sesion'],
     label: 'Cod. Inicio Sesion',
   },
+  'verification-code': {
+    buttonNeedles: ['cod. verificacion', 'cod verificacion', 'codigo de verificacion'],
+    label: 'Cod. Verificacion',
+  },
   'reset-password': {
     buttonNeedles: ['reset password'],
     label: 'Reset Password',
