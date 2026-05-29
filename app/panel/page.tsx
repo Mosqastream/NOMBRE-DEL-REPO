@@ -712,10 +712,15 @@ export default function PanelPage() {
   }, [router])
 
   useEffect(() => {
-    if (panelRole !== 'owner') {
+    if (panelRole === 'owner') {
+      setPanelView('owner')
+      if (!OWNER_SECTIONS.some(section => section.id === activeSection)) {
+        setActiveSection('solicitudes')
+      }
+    } else {
       setPanelView('usuario')
     }
-  }, [panelRole])
+  }, [activeSection, panelRole])
 
   useEffect(() => {
     if (!profile?.id) return
@@ -885,7 +890,12 @@ export default function PanelPage() {
 
       const normalizedPayload = normalizePanelPayload(payload)
       setPanelData(normalizedPayload)
-      if (normalizedPayload.profile.role !== 'owner') {
+      if (normalizedPayload.profile.role === 'owner') {
+        setPanelView('owner')
+        if (!OWNER_SECTIONS.some(section => section.id === activeSection)) {
+          setActiveSection('solicitudes')
+        }
+      } else {
         setPanelView('usuario')
       }
     } catch (loadError) {
@@ -1640,32 +1650,6 @@ export default function PanelPage() {
     }
   }
 
-  const renderViewSwitch = (className: string) =>
-    panelRole === 'owner' ? (
-      <div className={className}>
-        <button
-          type='button'
-          className={panelView === 'usuario' ? styles.viewButtonActive : styles.viewButton}
-          onClick={() => {
-            setPanelView('usuario')
-            setActiveSection('cuentas')
-          }}
-        >
-          Usuario
-        </button>
-        <button
-          type='button'
-          className={panelView === 'owner' ? styles.viewButtonActive : styles.viewButton}
-          onClick={() => {
-            setPanelView('owner')
-            setActiveSection('solicitudes')
-          }}
-        >
-          Owner
-        </button>
-      </div>
-    ) : null
-
   const renderSectionButtons = (navClassName: string) => (
     <nav className={navClassName} aria-label='Apartados del panel'>
       {visibleSections.map(section => {
@@ -1695,28 +1679,6 @@ export default function PanelPage() {
       })}
     </nav>
   )
-
-  const renderMobileOwnerToggle = () =>
-    panelRole === 'owner' ? (
-      <button
-        type='button'
-        className={panelView === 'owner' ? styles.mobileOwnerToggleActive : styles.mobileOwnerToggle}
-        onClick={() => {
-          if (panelView === 'owner') {
-            setPanelView('usuario')
-            setActiveSection('cuentas')
-            return
-          }
-          setPanelView('owner')
-          setActiveSection('solicitudes')
-        }}
-      >
-        <span className={styles.mobileOwnerToggleText}>Owner</span>
-        <span className={styles.mobileOwnerTrack}>
-          <span className={styles.mobileOwnerThumb} />
-        </span>
-      </button>
-    ) : null
 
   const renderStatusBadge = (status: string) => (
     <span
@@ -3353,7 +3315,6 @@ export default function PanelPage() {
               <span>{profile?.username || 'Panel'}</span>
             </div>
             <div className={styles.desktopControls}>
-              {renderViewSwitch(styles.viewSwitch)}
               {renderSectionButtons(styles.navList)}
             </div>
           </div>
@@ -3379,7 +3340,6 @@ export default function PanelPage() {
 
       <div className={styles.mobileDock}>
         <div className={styles.mobileUtilityRow}>
-          {renderMobileOwnerToggle()}
           <button type='button' className={styles.mobileExitButton} onClick={() => void handleSignOut()}>
             <span className={styles.mobileExitIcon} aria-hidden='true'>
               <svg viewBox='0 0 24 24'>
