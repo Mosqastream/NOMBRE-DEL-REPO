@@ -4370,12 +4370,26 @@ export default function PanelPage() {
                       disabled={assignHasInlineUsers}
                       onChange={event => {
                         setAssignSearch(event.target.value)
-                        setAssignPickerOpen(false)
+                        setAssignPickerOpen(true)
+                      }}
+                      onFocus={() => {
+                        if (!assignHasInlineUsers) {
+                          setAssignPickerOpen(true)
+                        }
+                      }}
+                      onClick={() => {
+                        if (!assignHasInlineUsers) {
+                          setAssignPickerOpen(true)
+                        }
                       }}
                       onKeyDown={event => {
                         if (event.key === 'Enter' && !assignHasInlineUsers) {
                           event.preventDefault()
                           setAssignPickerOpen(true)
+                        }
+
+                        if (event.key === 'Escape') {
+                          setAssignPickerOpen(false)
                         }
                       }}
                     />
