@@ -48,10 +48,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Ingresa un correo valido.' }, { status: 400 })
     }
 
-    if (!isSpecialNetflixRecipient(recipient)) {
-      return NextResponse.json({ error: 'Este correo no usa el flujo especial de Telegram.' }, { status: 403 })
-    }
-
     if (!action) {
       return NextResponse.json({ error: 'Selecciona una opcion valida.' }, { status: 400 })
     }
@@ -60,6 +56,27 @@ export async function POST(request: NextRequest) {
       request,
       recipient,
     })
+
+    if (!isSpecialNetflixRecipient(recipient)) {
+      const { getSupabaseAdmin } = await import('@/lib/supabaseAdmin')
+      const supabaseAdmin = getSupabaseAdmin()
+      const telegramResp = await supabaseAdmin
+        .from('telegram_code_accounts')
+        .select('id')
+        .eq('account_email', recipient)
+        .eq('enabled', true)
+        .limit(1)
+        .maybeSingle()
+
+      if (telegramResp.error) {
+        throw new Error(telegramResp.error.message)
+      }
+
+      const telegramAccount = (telegramResp.data || null) as { id: string } | null
+      if (!telegramAccount?.id) {
+        return NextResponse.json({ error: 'Este correo no usa el flujo especial de Telegram.' }, { status: 403 })
+      }
+    }
 
     const { bridgeSecret, bridgeUrl } = getBridgeConfig()
     const controller = new AbortController()

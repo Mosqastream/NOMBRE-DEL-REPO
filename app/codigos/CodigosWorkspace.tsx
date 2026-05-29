@@ -125,6 +125,7 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
   const [copiedActionKey, setCopiedActionKey] = useState<string | null>(null)
   const [telegramResult, setTelegramResult] = useState<TelegramSpecialResponse | null>(null)
   const [telegramActionKey, setTelegramActionKey] = useState<SpecialNetflixActionKey | null>(null)
+  const [telegramRecipients, setTelegramRecipients] = useState<string[]>([])
 
   useEffect(() => {
     let active = true
@@ -132,14 +133,24 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
     const readSession = async () => {
       const session = await supabase.auth.getSession()
       if (!active) return
-      setIsDashboardLoggedIn(Boolean(session.data.session))
+      const token = session.data.session?.access_token
+      setIsDashboardLoggedIn(Boolean(token))
+      if (token) {
+        void fetchTelegramRecipients(token)
+      }
     }
 
     void readSession()
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!active) return
-      setIsDashboardLoggedIn(Boolean(session))
+      const token = session?.access_token
+      setIsDashboardLoggedIn(Boolean(token))
+      if (token) {
+        void fetchTelegramRecipients(token)
+      } else {
+        setTelegramRecipients([])
+      }
     })
 
     return () => {
@@ -147,6 +158,26 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
       data.subscription.unsubscribe()
     }
   }, [])
+
+  const fetchTelegramRecipients = async (token: string) => {
+    try {
+      const response = await fetch('/api/codigos/telegram/accounts', {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      const payload = (await response.json().catch(() => ({}))) as {
+        recipients?: string[]
+      }
+      if (response.ok) {
+        setTelegramRecipients((payload.recipients || []).map(item => item.trim().toLowerCase()))
+      }
+    } catch {
+      setTelegramRecipients([])
+    }
+  }
 
   const visibleItems = useMemo(() => {
     if (!selectedPlatform) return []
@@ -167,8 +198,10 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
   }, [selectedItemKey, visibleItems])
 
   const normalizedRecipient = useMemo(() => recipient.trim().toLowerCase(), [recipient])
+  const telegramRecipientSet = useMemo(() => new Set(telegramRecipients), [telegramRecipients])
   const isSpecialNetflixFlow =
-    selectedPlatform === 'netflix' && isSpecialNetflixRecipient(normalizedRecipient)
+    selectedPlatform === 'netflix' &&
+    (isSpecialNetflixRecipient(normalizedRecipient) || telegramRecipientSet.has(normalizedRecipient))
   const activeTelegramAction = telegramActionKey ? getSpecialNetflixAction(telegramActionKey) : null
   const latestVisibleDate = visibleItems[0]?.date ?? null
   const platformMeta = selectedPlatform ? CODE_PLATFORM_META[selectedPlatform] : null
@@ -217,7 +250,10 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
       return
     }
 
-    if (selectedPlatform === 'netflix' && isSpecialNetflixRecipient(recipientValue)) {
+    if (
+      selectedPlatform === 'netflix' &&
+      (isSpecialNetflixRecipient(recipientValue) || telegramRecipientSet.has(recipientValue.toLowerCase()))
+    ) {
       setError('Este correo usa el flujo especial de Telegram. Elige una opcion.')
       return
     }
@@ -277,7 +313,7 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
     }
 
     const recipientValue = recipient.trim().toLowerCase()
-    if (!isSpecialNetflixRecipient(recipientValue)) {
+    if (!isSpecialNetflixRecipient(recipientValue) && !telegramRecipientSet.has(recipientValue)) {
       setError('Ingresa uno de los correos especiales para usar Telegram.')
       return
     }

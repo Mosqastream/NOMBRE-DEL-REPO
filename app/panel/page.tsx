@@ -35,6 +35,7 @@ const OWNER_SECTIONS = [
   { id: 'solicitudes', label: 'Solicitudes', icon: 'bell' },
   { id: 'asignacion', label: 'Asignacion', icon: 'spark' },
   { id: 'ventas', label: 'Ventas', icon: 'clock' },
+  { id: 'telegram', label: 'Telegram', icon: 'send' },
   { id: 'historial', label: 'Historial', icon: 'clock' },
 ] as const
 
@@ -89,6 +90,20 @@ type SettingsForm = {
   nextPinConfirm: string
 }
 
+type TelegramAccount = {
+  id: string
+  accountEmail: string
+  serviceName: string
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+type TelegramForm = {
+  accountEmail: string
+  serviceName: string
+}
+
 type PanelApiPayload = {
   error?: string
   message?: string
@@ -140,6 +155,11 @@ const defaultSettingsForm: SettingsForm = {
   currentPin: '',
   nextPin: '',
   nextPinConfirm: '',
+}
+
+const defaultTelegramForm: TelegramForm = {
+  accountEmail: '',
+  serviceName: 'Netflix',
 }
 
 const sanitizeNumericInput = (value: string) => {
@@ -329,6 +349,15 @@ function SectionIcon({ icon }: { icon: SectionIconName }) {
     )
   }
 
+  if (icon === 'send') {
+    return (
+      <svg viewBox='0 0 24 24' aria-hidden='true'>
+        <path d='M21 4 3.5 11.5l6.2 2.3L12 20l3.1-5.2L21 4Z' />
+        <path d='m9.7 13.8 5.4-5.4' />
+      </svg>
+    )
+  }
+
   return (
     <svg viewBox='0 0 24 24' aria-hidden='true'>
       <path d='M12 3.5 5 6.5v5c0 4.3 2.7 7.4 7 9 4.3-1.6 7-4.7 7-9v-5l-7-3Z' />
@@ -421,6 +450,9 @@ export default function PanelPage() {
   const [assignForm, setAssignForm] = useState<AssignForm>(defaultAssignForm)
   const [productForm, setProductForm] = useState<ProductForm>(defaultProductForm())
   const [settingsForm, setSettingsForm] = useState<SettingsForm>(defaultSettingsForm)
+  const [telegramAccounts, setTelegramAccounts] = useState<TelegramAccount[]>([])
+  const [telegramForm, setTelegramForm] = useState<TelegramForm>(defaultTelegramForm)
+  const [telegramLoading, setTelegramLoading] = useState(false)
   const [pageByKey, setPageByKey] = useState<Record<string, number>>({})
   const realtimeRefreshRef = useRef<number | null>(null)
   const realtimePollRef = useRef<number | null>(null)
@@ -636,6 +668,11 @@ export default function PanelPage() {
   }, [profile?.username])
 
   useEffect(() => {
+    if (panelView !== 'owner' || activeSection !== 'telegram') return
+    void fetchTelegramAccounts()
+  }, [activeSection, panelView])
+
+  useEffect(() => {
     if (!profile?.id) return
 
     const scheduleRefresh = () => {
@@ -666,6 +703,12 @@ export default function PanelPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'support_messages' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'support_request_history' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'panel_products' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'telegram_code_accounts' }, () => {
+        scheduleRefresh()
+        if (panelView === 'owner' && activeSection === 'telegram') {
+          void fetchTelegramAccounts()
+        }
+      })
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'panel_product_special_prices' },
@@ -685,7 +728,7 @@ export default function PanelPage() {
       document.removeEventListener('visibilitychange', refreshWhenVisible)
       void supabase.removeChannel(channel)
     }
-  }, [profile?.id])
+  }, [activeSection, panelView, profile?.id])
 
   const getAccessToken = async () => {
     const sessionResp = await supabase.auth.getSession()
@@ -765,6 +808,94 @@ export default function PanelPage() {
     }
 
     return payload
+  }
+
+  const fetchTelegramAccounts = async () => {
+    setTelegramLoading(true)
+    setError('')
+    try {
+      const token = await getAccessToken()
+      const response = await fetch('/api/panel/telegram', {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        accounts?: TelegramAccount[]
+        error?: string
+      }
+
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error || 'No se pudo cargar Telegram.')
+      }
+
+      setTelegramAccounts(payload.accounts || [])
+    } catch (telegramError) {
+      setTelegramAccounts([])
+      setError(telegramError instanceof Error ? telegramError.message : 'No se pudo cargar Telegram.')
+    } finally {
+      setTelegramLoading(false)
+    }
+  }
+
+  const submitTelegramAccount = async () => {
+    setSaving(true)
+    setError('')
+    try {
+      const payload = await callPanelApi('/api/panel/telegram', {
+        action: 'create',
+        accountEmail: telegramForm.accountEmail,
+        serviceName: telegramForm.serviceName,
+      })
+
+      setTelegramForm(defaultTelegramForm)
+      setNotice(payload.message || 'Cuenta Telegram guardada.')
+      await fetchTelegramAccounts()
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'No se pudo guardar la cuenta Telegram.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleTelegramAccount = async (account: TelegramAccount) => {
+    setSaving(true)
+    setError('')
+    try {
+      const payload = await callPanelApi('/api/panel/telegram', {
+        action: 'toggle',
+        accountId: account.id,
+      })
+
+      setNotice(payload.message || 'Cuenta Telegram actualizada.')
+      await fetchTelegramAccounts()
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'No se pudo actualizar Telegram.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const deleteTelegramAccount = async (account: TelegramAccount) => {
+    setSaving(true)
+    setError('')
+    try {
+      const payload = await callPanelApi('/api/panel/telegram', {
+        action: 'delete',
+        accountId: account.id,
+      })
+
+      setNotice(payload.message || 'Cuenta Telegram eliminada.')
+      setTelegramAccounts(current => current.filter(item => item.id !== account.id))
+      await fetchTelegramAccounts()
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'No se pudo eliminar Telegram.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleSignOut = async () => {
@@ -2610,6 +2741,133 @@ export default function PanelPage() {
     )
   }
 
+  const renderTelegramSection = () => {
+    const pageKey = 'owner-telegram'
+    const pageTelegramAccounts = getPageItems(pageKey, telegramAccounts)
+
+    return (
+      <div className={styles.sectionStack}>
+        <div className={styles.blockCard}>
+          <div className={styles.blockHeader}>
+            <div>
+              <span className={styles.blockEyebrow}>Telegram</span>
+              <h3>Cuentas con flujo especial</h3>
+            </div>
+          </div>
+
+          <div className={styles.settingsGrid}>
+            <div className={styles.settingsCard}>
+              <div>
+                <span className={styles.blockEyebrow}>Nueva cuenta</span>
+                <h4>Activar Telegram en Codigos</h4>
+              </div>
+              <label className={styles.formStack}>
+                <span>Correo</span>
+                <input
+                  className={styles.input}
+                  type='email'
+                  placeholder='correo@dominio.com'
+                  value={telegramForm.accountEmail}
+                  onChange={event =>
+                    setTelegramForm(current => ({ ...current, accountEmail: event.target.value }))
+                  }
+                />
+              </label>
+              <label className={styles.formStack}>
+                <span>Servicio</span>
+                <input
+                  className={styles.input}
+                  placeholder='Netflix'
+                  value={telegramForm.serviceName}
+                  onChange={event =>
+                    setTelegramForm(current => ({ ...current, serviceName: event.target.value }))
+                  }
+                />
+              </label>
+              <button
+                type='button'
+                className={styles.primaryButton}
+                onClick={() => void submitTelegramAccount()}
+                disabled={saving}
+              >
+                Guardar cuenta
+              </button>
+            </div>
+
+            <div className={styles.settingsCard}>
+              <div>
+                <span className={styles.blockEyebrow}>Conexion</span>
+                <h4>Bridge Telegram</h4>
+              </div>
+              <p>
+                Estas cuentas activan los botones especiales dentro de Codigos. La conexion real usa
+                <strong> CODES_TELEGRAM_BRIDGE_URL</strong> y <strong>CODES_TELEGRAM_BRIDGE_SECRET</strong>.
+              </p>
+              <div className={styles.emptyCard}>
+                Si el bridge esta prendido, el usuario escribe el correo asignado y aparece el flujo Telegram.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.blockCard}>
+          <div className={styles.blockHeader}>
+            <div>
+              <span className={styles.blockEyebrow}>Registradas</span>
+              <h3>Cuentas Telegram</h3>
+            </div>
+            <button
+              type='button'
+              className={styles.secondaryButton}
+              onClick={() => void fetchTelegramAccounts()}
+              disabled={telegramLoading}
+            >
+              {telegramLoading ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
+
+          {telegramAccounts.length === 0 ? (
+            <div className={styles.emptyCard}>Todavia no tienes cuentas Telegram configuradas.</div>
+          ) : (
+            <>
+              <div className={styles.cardGridVisible}>
+                {pageTelegramAccounts.map(account => (
+                  <article key={account.id} className={styles.miniCard}>
+                    <div className={styles.miniCardHead}>
+                      <strong>{account.serviceName}</strong>
+                      {renderProductStockBadge(account.enabled)}
+                    </div>
+                    <p>{account.accountEmail}</p>
+                    <span>Creada: {formatDate(account.createdAt)}</span>
+                    <div className={styles.inlineActions}>
+                      <button
+                        type='button'
+                        className={styles.secondaryButton}
+                        onClick={() => void toggleTelegramAccount(account)}
+                        disabled={saving}
+                      >
+                        {account.enabled ? 'Desactivar' : 'Activar'}
+                      </button>
+                      <button
+                        type='button'
+                        className={styles.ghostButton}
+                        onClick={() => void deleteTelegramAccount(account)}
+                        disabled={saving}
+                      >
+                        Borrar
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              {renderPagination(pageKey, telegramAccounts.length)}
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   const renderConfiguracionSection = () => (
     <div className={styles.sectionStack}>
       <div className={styles.blockCard}>
@@ -2739,6 +2997,7 @@ export default function PanelPage() {
       if (activeSection === 'solicitudes') return renderSupportSectionV2(true)
       if (activeSection === 'asignacion') return renderAssignSection()
       if (activeSection === 'ventas') return renderVentasSectionV2()
+      if (activeSection === 'telegram') return renderTelegramSection()
       if (activeSection === 'historial') return renderHistorialSection(true)
       return renderOwnerUsersSectionV2()
     }
