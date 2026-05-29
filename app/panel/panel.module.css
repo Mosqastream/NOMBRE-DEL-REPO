@@ -665,6 +665,35 @@
   gap: 12px;
 }
 
+.settingsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.settingsCard {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(135deg, rgba(255, 31, 45, 0.08), rgba(255, 255, 255, 0.025)),
+    rgba(255, 255, 255, 0.025);
+}
+
+.settingsCard h4 {
+  margin: 6px 0 0;
+  font-size: 1.2rem;
+  letter-spacing: -0.03em;
+}
+
+.settingsCard label > span {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
 .fileButton {
   display: inline-flex;
   align-items: center;
@@ -1215,6 +1244,10 @@
   }
 
   .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsGrid {
     grid-template-columns: 1fr;
   }
 }

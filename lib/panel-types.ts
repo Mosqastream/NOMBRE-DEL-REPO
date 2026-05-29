@@ -1,7 +1,14 @@
 export type PanelRole = 'usuario' | 'owner'
 export type PanelView = 'usuario' | 'owner'
 
-export type UserSectionId = 'cuentas' | 'soporte' | 'gestion' | 'compras' | 'codigos' | 'historial'
+export type UserSectionId =
+  | 'cuentas'
+  | 'soporte'
+  | 'gestion'
+  | 'compras'
+  | 'codigos'
+  | 'historial'
+  | 'configuracion'
 export type OwnerSectionId = 'vip' | 'solicitudes' | 'asignacion' | 'ventas' | 'historial'
 export type PanelSectionId = UserSectionId | OwnerSectionId
 

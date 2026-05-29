@@ -27,6 +27,7 @@ const USER_SECTIONS = [
   { id: 'compras', label: 'Compras', icon: 'card' },
   { id: 'codigos', label: 'Codigos', icon: 'shield' },
   { id: 'historial', label: 'Historial', icon: 'clock' },
+  { id: 'configuracion', label: 'Configuracion', icon: 'settings' },
 ] as const
 
 const OWNER_SECTIONS = [
@@ -77,6 +78,15 @@ type ProductForm = {
   specialRows: ProductSpecialDraft[]
 }
 
+type SettingsForm = {
+  currentPassword: string
+  nextPassword: string
+  nextPasswordConfirm: string
+  currentPin: string
+  nextPin: string
+  nextPinConfirm: string
+}
+
 type PanelApiPayload = {
   error?: string
   message?: string
@@ -120,6 +130,15 @@ const defaultProductForm = (providerName = ''): ProductForm => ({
   pendingSpecialPrice: '',
   specialRows: [],
 })
+
+const defaultSettingsForm: SettingsForm = {
+  currentPassword: '',
+  nextPassword: '',
+  nextPasswordConfirm: '',
+  currentPin: '',
+  nextPin: '',
+  nextPinConfirm: '',
+}
 
 const sanitizeNumericInput = (value: string) => {
   const cleaned = value.replace(/[^\d.]/g, '')
@@ -299,6 +318,15 @@ function SectionIcon({ icon }: { icon: SectionIconName }) {
     )
   }
 
+  if (icon === 'settings') {
+    return (
+      <svg viewBox='0 0 24 24' aria-hidden='true'>
+        <path d='M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z' />
+        <path d='m19 12 2-1.5-2-3.5-2.4 1a7 7 0 0 0-1.2-.7L15 4h-4l-.4 3.3a7 7 0 0 0-1.2.7L7 7l-2 3.5L7 12l-2 1.5L7 17l2.4-1a7 7 0 0 0 1.2.7L11 20h4l.4-3.3a7 7 0 0 0 1.2-.7L19 17l2-3.5Z' />
+      </svg>
+    )
+  }
+
   return (
     <svg viewBox='0 0 24 24' aria-hidden='true'>
       <path d='M12 3.5 5 6.5v5c0 4.3 2.7 7.4 7 9 4.3-1.6 7-4.7 7-9v-5l-7-3Z' />
@@ -390,6 +418,7 @@ export default function PanelPage() {
   const [purchaseProofDataUrl, setPurchaseProofDataUrl] = useState<string | null>(null)
   const [assignForm, setAssignForm] = useState<AssignForm>(defaultAssignForm)
   const [productForm, setProductForm] = useState<ProductForm>(defaultProductForm())
+  const [settingsForm, setSettingsForm] = useState<SettingsForm>(defaultSettingsForm)
   const realtimeRefreshRef = useRef<number | null>(null)
   const realtimePollRef = useRef<number | null>(null)
   const refreshInFlightRef = useRef(false)
@@ -710,6 +739,68 @@ export default function PanelPage() {
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.replace('/')
+  }
+
+  const updateSettingsField = (field: keyof SettingsForm, value: string) => {
+    const nextValue =
+      field === 'currentPin' || field === 'nextPin' || field === 'nextPinConfirm'
+        ? value.replace(/\D/g, '').slice(0, 4)
+        : value
+
+    setSettingsForm(current => ({
+      ...current,
+      [field]: nextValue,
+    }))
+  }
+
+  const updatePasswordSettings = async () => {
+    setSaving(true)
+    setError('')
+    try {
+      const payload = await callPanelApi('/api/panel/settings', {
+        action: 'password',
+        currentPassword: settingsForm.currentPassword,
+        nextPassword: settingsForm.nextPassword,
+        nextPasswordConfirm: settingsForm.nextPasswordConfirm,
+      })
+
+      setSettingsForm(current => ({
+        ...current,
+        currentPassword: '',
+        nextPassword: '',
+        nextPasswordConfirm: '',
+      }))
+      setNotice(payload.message || 'Contrasena actualizada.')
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'No se pudo cambiar la contrasena.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const updatePinSettings = async () => {
+    setSaving(true)
+    setError('')
+    try {
+      const payload = await callPanelApi('/api/panel/settings', {
+        action: 'pin',
+        currentPin: settingsForm.currentPin,
+        nextPin: settingsForm.nextPin,
+        nextPinConfirm: settingsForm.nextPinConfirm,
+      })
+
+      setSettingsForm(current => ({
+        ...current,
+        currentPin: '',
+        nextPin: '',
+        nextPinConfirm: '',
+      }))
+      setNotice(payload.message || 'Codigo actualizado.')
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'No se pudo cambiar el codigo.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const submitSupportIssue = async () => {
@@ -2409,6 +2500,129 @@ export default function PanelPage() {
     </div>
   )
 
+  const renderConfiguracionSection = () => (
+    <div className={styles.sectionStack}>
+      <div className={styles.blockCard}>
+        <div className={styles.blockHeader}>
+          <div>
+            <span className={styles.blockEyebrow}>Seguridad</span>
+            <h3>Configura tu acceso</h3>
+          </div>
+        </div>
+
+        <div className={styles.settingsGrid}>
+          <form
+            className={styles.settingsCard}
+            onSubmit={event => {
+              event.preventDefault()
+              void updatePasswordSettings()
+            }}
+          >
+            <div>
+              <span className={styles.blockEyebrow}>Contrasena</span>
+              <h4>Cambiar contrasena</h4>
+            </div>
+
+            <label className={styles.formStack}>
+              <span>Contrasena actual</span>
+              <input
+                className={styles.input}
+                type='password'
+                autoComplete='current-password'
+                value={settingsForm.currentPassword}
+                onChange={event => updateSettingsField('currentPassword', event.target.value)}
+              />
+            </label>
+
+            <div className={styles.formGrid}>
+              <label className={styles.formStack}>
+                <span>Nueva contrasena</span>
+                <input
+                  className={styles.input}
+                  type='password'
+                  autoComplete='new-password'
+                  value={settingsForm.nextPassword}
+                  onChange={event => updateSettingsField('nextPassword', event.target.value)}
+                />
+              </label>
+              <label className={styles.formStack}>
+                <span>Confirmar nueva contrasena</span>
+                <input
+                  className={styles.input}
+                  type='password'
+                  autoComplete='new-password'
+                  value={settingsForm.nextPasswordConfirm}
+                  onChange={event => updateSettingsField('nextPasswordConfirm', event.target.value)}
+                />
+              </label>
+            </div>
+
+            <button type='submit' className={styles.primaryButton} disabled={saving}>
+              Guardar contrasena
+            </button>
+          </form>
+
+          <form
+            className={styles.settingsCard}
+            onSubmit={event => {
+              event.preventDefault()
+              void updatePinSettings()
+            }}
+          >
+            <div>
+              <span className={styles.blockEyebrow}>Codigo</span>
+              <h4>Cambiar codigo de 4 digitos</h4>
+            </div>
+
+            <label className={styles.formStack}>
+              <span>Codigo antiguo</span>
+              <input
+                className={styles.input}
+                type='password'
+                inputMode='numeric'
+                maxLength={4}
+                autoComplete='one-time-code'
+                value={settingsForm.currentPin}
+                onChange={event => updateSettingsField('currentPin', event.target.value)}
+              />
+            </label>
+
+            <div className={styles.formGrid}>
+              <label className={styles.formStack}>
+                <span>Codigo nuevo</span>
+                <input
+                  className={styles.input}
+                  type='password'
+                  inputMode='numeric'
+                  maxLength={4}
+                  autoComplete='one-time-code'
+                  value={settingsForm.nextPin}
+                  onChange={event => updateSettingsField('nextPin', event.target.value)}
+                />
+              </label>
+              <label className={styles.formStack}>
+                <span>Confirmar codigo nuevo</span>
+                <input
+                  className={styles.input}
+                  type='password'
+                  inputMode='numeric'
+                  maxLength={4}
+                  autoComplete='one-time-code'
+                  value={settingsForm.nextPinConfirm}
+                  onChange={event => updateSettingsField('nextPinConfirm', event.target.value)}
+                />
+              </label>
+            </div>
+
+            <button type='submit' className={styles.primaryButton} disabled={saving}>
+              Guardar codigo
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+
   const renderCurrentSection = () => {
     if (panelView === 'owner') {
       if (activeSection === 'vip') return renderOwnerUsersSectionV2()
@@ -2425,6 +2639,7 @@ export default function PanelPage() {
     if (activeSection === 'compras') return renderComprasSectionV2()
     if (activeSection === 'codigos') return renderCodigosSection()
     if (activeSection === 'historial') return renderHistorialSection(false)
+    if (activeSection === 'configuracion') return renderConfiguracionSection()
     return renderAccountsSection()
   }
 
