@@ -117,6 +117,25 @@ type PanelApiPayload = {
   productId?: string
   saleId?: string
   user?: Pick<PanelOwnerUser, 'id' | 'username'>
+  users?: Array<Pick<PanelOwnerUser, 'id' | 'username'>>
+  omitted?: Array<{ username?: string; reason: string }>
+  excelPreview?: ExcelAssignPreview
+}
+
+type ExcelAssignPreview = {
+  totalRows: number
+  assignments: Array<{
+    email: string
+    userId: string
+    username: string
+    cutoffDate: string | null
+    serviceName: string
+    accountType: string
+  }>
+  omitted: Array<{
+    email: string
+    reason: string
+  }>
 }
 
 type OwnerAccountFilter = 'todos' | 'vigentes' | 'por_vencer' | 'vencidas'
@@ -509,6 +528,9 @@ export default function PanelPage() {
   const [assignSearch, setAssignSearch] = useState('')
   const [assignUserId, setAssignUserId] = useState('')
   const [assignPickerOpen, setAssignPickerOpen] = useState(false)
+  const [assignExcelFileName, setAssignExcelFileName] = useState('')
+  const [assignExcelDataUrl, setAssignExcelDataUrl] = useState<string | null>(null)
+  const [assignExcelPreview, setAssignExcelPreview] = useState<ExcelAssignPreview | null>(null)
   const [issueForm, setIssueForm] = useState<SupportIssueForm>(defaultIssueForm)
   const [messageForm, setMessageForm] = useState<SupportMessageForm>(defaultMessageForm)
   const [renewalProofDataUrl, setRenewalProofDataUrl] = useState<string | null>(null)
@@ -1474,6 +1496,77 @@ export default function PanelPage() {
     })
   }
 
+  const resetAssignModal = () => {
+    setAssignOpen(false)
+    setAssignForm(defaultAssignForm)
+    setAssignSearch('')
+    setAssignUserId('')
+    setAssignPickerOpen(false)
+    setAssignExcelFileName('')
+    setAssignExcelDataUrl(null)
+    setAssignExcelPreview(null)
+  }
+
+  const previewExcelAssign = async () => {
+    if (!assignExcelDataUrl) {
+      setError('Sube un Excel primero.')
+      return
+    }
+
+    setSaving(true)
+    setError('')
+    try {
+      const payload = await callPanelApi('/api/panel/accounts', {
+        action: 'preview_excel',
+        fileDataUrl: assignExcelDataUrl,
+        serviceName: assignForm.serviceName,
+        accountType: assignForm.accountType,
+      })
+
+      setAssignExcelPreview(payload.excelPreview || null)
+      setNotice(payload.message || 'Excel previsualizado.')
+    } catch (previewError) {
+      setAssignExcelPreview(null)
+      setError(previewError instanceof Error ? previewError.message : 'No se pudo leer el Excel.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const confirmExcelAssign = async () => {
+    const assignments = assignExcelPreview?.assignments || []
+    if (assignments.length === 0) {
+      setError('No hay cuentas validas para confirmar.')
+      return
+    }
+
+    setSaving(true)
+    setError('')
+    try {
+      const payload = await callPanelApi('/api/panel/accounts', {
+        action: 'assign',
+        assignments,
+        renewalPrice: Number(assignForm.renewalPrice || 0),
+        renewalPeriodDays: Number(assignForm.renewalPeriodDays || 30),
+        status: 'activa',
+      })
+
+      if (payload.accounts?.length) {
+        setPanelData(current => (current ? appendAccountsToPayload(current, payload.accounts || []) : current))
+        setExpandedUserId(assignments[0]?.userId || 'all')
+      }
+
+      resetAssignModal()
+      setActiveSection('asignacion')
+      setNotice(payload.message || 'Cuentas importadas desde Excel.')
+      await refreshPanel(true)
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'No se pudo importar el Excel.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const submitAssign = async () => {
     setSaving(true)
     setError('')
@@ -1543,11 +1636,7 @@ export default function PanelPage() {
         setExpandedUserId(assignments[0]?.userId || assignUserId || 'all')
       }
 
-      setAssignOpen(false)
-      setAssignForm(defaultAssignForm)
-      setAssignSearch('')
-      setAssignUserId('')
-      setAssignPickerOpen(false)
+      resetAssignModal()
       setActiveSection('asignacion')
       setNotice(payload.message || 'Cuenta asignada.')
       await refreshPanel(true)
@@ -1562,17 +1651,27 @@ export default function PanelPage() {
     setSaving(true)
     setError('')
     try {
+      const isOwnerBulk = panelRole === 'owner' && /[,\n\r]/.test(pendingUsername)
       const payload = await callPanelApi('/api/subcliente', {
-        action: 'create_pending',
+        action: isOwnerBulk ? 'create_pending_many' : 'create_pending',
         username: pendingUsername,
       })
 
       setPendingUserOpen(false)
       setPendingUsername('')
-      setNotice(payload.message || 'Usuario pendiente creado.')
+      const omittedCount = payload.omitted?.length || 0
+      setNotice(
+        omittedCount > 0
+          ? `${payload.message || 'Usuarios procesados.'} Omitidos: ${payload.omitted
+              ?.slice(0, 3)
+              .map(item => `${item.username || 'usuario'} (${item.reason})`)
+              .join(', ')}`
+          : payload.message || 'Usuario pendiente creado.'
+      )
       await refreshPanel(true)
-      if (payload.user?.id && panelRole === 'owner') {
-        setExpandedUserId(payload.user.id)
+      const firstCreatedUser = payload.user || payload.users?.[0]
+      if (firstCreatedUser?.id && panelRole === 'owner') {
+        setExpandedUserId(firstCreatedUser.id)
         setActiveSection('vip')
       }
     } catch (submitError) {
@@ -3679,15 +3778,27 @@ export default function PanelPage() {
             </div>
             <div className={styles.formStack}>
               <div className={styles.emptyCard}>
-                Solo crea el nombre. Luego esa persona entra a /subcliente, completa telefono, contrasena y su codigo de 4 digitos.
+                {panelRole === 'owner'
+                  ? 'Puedes crear uno o varios usuarios. Para masivo usa: usuario1,usuario2,usuario3.'
+                  : 'Solo crea el nombre. Luego esa persona entra a /subcliente, completa telefono, contrasena y su codigo de 4 digitos.'}
               </div>
-              <input
-                className={styles.input}
-                placeholder='Nombre de usuario'
-                value={pendingUsername}
-                onChange={event => setPendingUsername(event.target.value)}
-                autoFocus
-              />
+              {panelRole === 'owner' ? (
+                <textarea
+                  className={styles.textarea}
+                  placeholder={'Nombre de usuario o masivo\nusuario1,usuario2,usuario3'}
+                  value={pendingUsername}
+                  onChange={event => setPendingUsername(event.target.value)}
+                  autoFocus
+                />
+              ) : (
+                <input
+                  className={styles.input}
+                  placeholder='Nombre de usuario'
+                  value={pendingUsername}
+                  onChange={event => setPendingUsername(event.target.value)}
+                  autoFocus
+                />
+              )}
               <button
                 type='button'
                 className={styles.primaryButton}
@@ -3883,7 +3994,7 @@ export default function PanelPage() {
                 <span className={styles.blockEyebrow}>Asignacion</span>
                 <h3>Agregar cuenta</h3>
               </div>
-              <button type='button' className={styles.modalClose} onClick={() => setAssignOpen(false)}>
+              <button type='button' className={styles.modalClose} onClick={resetAssignModal}>
                 Cerrar
               </button>
             </div>
@@ -4012,6 +4123,74 @@ export default function PanelPage() {
                 {assignHasInlineData
                   ? 'Modo masivo detectado: la fecha de corte se toma de cada linea despues de |.'
                   : 'Si no usas |, se aplicara el usuario y la fecha de corte seleccionados arriba.'}
+              </div>
+              <div className={styles.excelImportCard}>
+                <div className={styles.excelImportHeader}>
+                  <div>
+                    <span className={styles.blockEyebrow}>Importar Excel</span>
+                    <strong>Asignacion masiva con preview</strong>
+                    <small>
+                      Lee Cuenta, Cliente y Corte. El cliente usa solo el nombre antes de @dominio.com.
+                    </small>
+                  </div>
+                  <label className={styles.fileButton}>
+                    {assignExcelFileName || 'Subir Excel'}
+                    <input
+                      type='file'
+                      accept='.xlsx,.xls,.csv'
+                      onChange={async event => {
+                        const file = event.target.files?.[0] || null
+                        setAssignExcelPreview(null)
+                        setAssignExcelFileName(file?.name || '')
+                        setAssignExcelDataUrl(await fileToDataUrl(file))
+                      }}
+                    />
+                  </label>
+                </div>
+                <button
+                  type='button'
+                  className={styles.secondaryButton}
+                  onClick={() => void previewExcelAssign()}
+                  disabled={saving || !assignExcelDataUrl}
+                >
+                  Previsualizar Excel
+                </button>
+                {assignExcelPreview && (
+                  <div className={styles.excelPreviewGrid}>
+                    <div className={styles.excelPreviewGood}>
+                      <strong>Se asignaran {assignExcelPreview.assignments.length} cuentas</strong>
+                      <div className={styles.excelPreviewList}>
+                        {assignExcelPreview.assignments.slice(0, 80).map((item, index) => (
+                          <span key={`${item.userId}-${item.email}-${index}`}>
+                            {item.email}|{item.username}|{item.cutoffDate || 'sin corte'}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className={styles.excelPreviewBad}>
+                      <strong>Omitidas / error: {assignExcelPreview.omitted.length}</strong>
+                      <div className={styles.excelPreviewList}>
+                        {assignExcelPreview.omitted.length === 0 ? (
+                          <span>Sin errores detectados.</span>
+                        ) : (
+                          assignExcelPreview.omitted.slice(0, 80).map((item, index) => (
+                            <span key={`${item.email}-${index}`}>
+                              {item.email}|{item.reason}
+                            </span>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type='button'
+                      className={styles.primaryButton}
+                      onClick={() => void confirmExcelAssign()}
+                      disabled={saving || assignExcelPreview.assignments.length === 0}
+                    >
+                      Confirmar importacion
+                    </button>
+                  </div>
+                )}
               </div>
               {assignHasInlineUsers && (
                 <div className={styles.assignHint}>

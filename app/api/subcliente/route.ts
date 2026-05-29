@@ -33,6 +33,8 @@ type CreatorRow = {
   role: 'usuario' | 'owner'
 }
 
+type PanelSession = Awaited<ReturnType<typeof requirePanelSession>>
+
 const getPublicClient = () => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -90,8 +92,7 @@ const findProfileByUsername = async (username: string) => {
   return (profileResp.data || null) as SubclienteProfileRow | null
 }
 
-async function createPendingUser(request: NextRequest, username: string) {
-  const session = await requirePanelSession(request)
+async function createPendingUserForSession(session: PanelSession, username: string) {
   const supabaseAdmin = session.supabaseAdmin
 
   const validationError = validateUsername(username)
@@ -155,6 +156,58 @@ async function createPendingUser(request: NextRequest, username: string) {
   return NextResponse.json({
     message: 'Usuario pendiente creado.',
     user: profileResp.data,
+  })
+}
+
+async function createPendingUser(request: NextRequest, username: string) {
+  const session = await requirePanelSession(request)
+  return createPendingUserForSession(session, username)
+}
+
+async function createPendingUsersMany(request: NextRequest, usernamesText: string) {
+  const session = await requirePanelSession(request, true)
+  const usernames = Array.from(
+    new Set(
+      usernamesText
+        .split(/[,\n\r]+/)
+        .map(item => normalizeUsername(item))
+        .filter(Boolean)
+    )
+  )
+
+  if (usernames.length === 0) {
+    throw new PanelApiError('Agrega al menos un nombre de usuario.', 400)
+  }
+
+  const created: Array<{ id: string; username: string }> = []
+  const omitted: Array<{ username: string; reason: string }> = []
+
+  for (const username of usernames) {
+    try {
+      const response = await createPendingUserForSession(session, username)
+      const payload = (await response.json()) as { user?: { id?: string; username?: string } }
+      if (payload.user?.id && payload.user.username) {
+        created.push({ id: payload.user.id, username: payload.user.username })
+      }
+    } catch (error) {
+      omitted.push({
+        username,
+        reason: error instanceof Error ? error.message : 'No se pudo crear.',
+      })
+    }
+  }
+
+  if (created.length === 0 && omitted.length > 0) {
+    throw new PanelApiError('No se pudo crear ningun usuario. Revisa omitidos.', 400)
+  }
+
+  return NextResponse.json({
+    message:
+      omitted.length > 0
+        ? `${created.length} usuarios creados, ${omitted.length} omitidos.`
+        : `${created.length} usuarios creados.`,
+    users: created,
+    omitted,
   })
 }
 
@@ -349,6 +402,10 @@ export async function POST(request: NextRequest) {
 
     if (action === 'create_pending') {
       return await createPendingUser(request, username)
+    }
+
+    if (action === 'create_pending_many') {
+      return await createPendingUsersMany(request, body.username || '')
     }
 
     if (action === 'lookup') {

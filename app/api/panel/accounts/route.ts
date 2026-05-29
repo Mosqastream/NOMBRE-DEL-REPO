@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
+import * as XLSX from 'xlsx'
 import { PanelApiError, requirePanelSession } from '@/lib/panel-auth'
 import type { PanelAccount, ServiceAccountStatus } from '@/lib/panel-types'
+import { normalizeUsername, validateUsername } from '@/lib/auth-identity'
 import { normalizeDataUrlImage, parseMoney, parseNullableDate } from '@/lib/panel-utils'
 
 export const runtime = 'nodejs'
@@ -30,6 +32,20 @@ type ProfileMiniRow = {
   username: string
   parent_id?: string | null
   created_by_id?: string | null
+}
+
+type PreviewAssignment = {
+  email: string
+  userId: string
+  username: string
+  cutoffDate: string | null
+  serviceName: string
+  accountType: string
+}
+
+type PreviewOmitted = {
+  email: string
+  reason: string
 }
 
 const ACCOUNT_STATUSES = new Set<ServiceAccountStatus>(['activa', 'pausada', 'sin_pago', 'desactivada'])
@@ -95,6 +111,166 @@ async function ensureNoActiveSupportRequest(
   }
 }
 
+const normalizeHeader = (value: unknown) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+
+const findHeaderIndex = (headers: unknown[], candidates: string[]) => {
+  const normalized = headers.map(normalizeHeader)
+  return normalized.findIndex(header => candidates.some(candidate => header === candidate || header.includes(candidate)))
+}
+
+const readStringCell = (value: unknown) => String(value || '').trim()
+
+const parseExcelDate = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return null
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10)
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const parsed = XLSX.SSF.parse_date_code(value)
+    if (parsed?.y && parsed?.m && parsed?.d) {
+      return `${String(parsed.y).padStart(4, '0')}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`
+    }
+  }
+
+  const raw = readStringCell(value)
+  if (!raw) return null
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+
+  const match = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/)
+  if (match) {
+    const [, day, month, year] = match
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  }
+
+  const parsed = new Date(raw)
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10)
+
+  return null
+}
+
+const dataUrlToBuffer = (value: string) => {
+  const base64 = value.includes(',') ? value.split(',').pop() || '' : value
+  if (!base64.trim()) {
+    throw new PanelApiError('Sube un archivo Excel valido.', 400)
+  }
+  return Buffer.from(base64, 'base64')
+}
+
+async function previewExcelAssignments(
+  session: Awaited<ReturnType<typeof requirePanelSession>>,
+  params: {
+    fileDataUrl?: string
+    serviceName?: string
+    accountType?: string
+  }
+) {
+  const workbook = XLSX.read(dataUrlToBuffer(String(params.fileDataUrl || '')), {
+    type: 'buffer',
+    cellDates: true,
+  })
+  const sheetName = workbook.SheetNames[0]
+  const sheet = sheetName ? workbook.Sheets[sheetName] : null
+
+  if (!sheet) {
+    throw new PanelApiError('El Excel no tiene hojas para leer.', 400)
+  }
+
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' })
+  const headers = rows[0] || []
+  const serviceIndex = findHeaderIndex(headers, ['servicio'])
+  const emailIndex = findHeaderIndex(headers, ['cuenta', 'correo', 'email'])
+  const typeIndex = findHeaderIndex(headers, ['tipo'])
+  const clientIndex = findHeaderIndex(headers, ['cliente'])
+  const cutoffIndex = findHeaderIndex(headers, ['corte', 'fecha corte', 'fecha de corte', 'vencimiento'])
+
+  if (emailIndex === -1 || clientIndex === -1) {
+    throw new PanelApiError('El Excel debe tener columnas Cuenta y Cliente.', 400)
+  }
+
+  const profilesResp = await session.supabaseAdmin.from('profiles').select('id, username')
+  if (profilesResp.error) {
+    throw new PanelApiError(profilesResp.error.message, 500)
+  }
+
+  const profileByUsername = new Map(
+    ((profilesResp.data || []) as ProfileMiniRow[]).map(profile => [normalizeUsername(profile.username), profile])
+  )
+
+  const assignments: PreviewAssignment[] = []
+  const omitted: PreviewOmitted[] = []
+  const seen = new Set<string>()
+  const fallbackServiceName = String(params.serviceName || 'Netflix').trim() || 'Netflix'
+  const fallbackAccountType = String(params.accountType || 'Cuenta completa').trim() || 'Cuenta completa'
+
+  rows.slice(1).forEach((row, index) => {
+    const rowNumber = index + 2
+    const email = readStringCell(row[emailIndex]).toLowerCase()
+    const rawClient = readStringCell(row[clientIndex])
+    const clientTone = rawClient.toLowerCase()
+
+    if (!email || !email.includes('@')) {
+      omitted.push({ email: email || `fila ${rowNumber}`, reason: 'correo invalido o vacio' })
+      return
+    }
+
+    if (!rawClient || ['n/a', 'na', 'null', 'none', '-'].includes(clientTone)) {
+      omitted.push({ email, reason: 'cliente vacio o N/A' })
+      return
+    }
+
+    const username = normalizeUsername(rawClient.split('@')[0] || '')
+    const validationError = validateUsername(username)
+    if (validationError) {
+      omitted.push({ email, reason: `cliente invalido: ${rawClient}` })
+      return
+    }
+
+    const profile = profileByUsername.get(username)
+    if (!profile?.id) {
+      omitted.push({ email, reason: `usuario no existe: ${username}` })
+      return
+    }
+
+    const cutoffDate = cutoffIndex >= 0 ? parseExcelDate(row[cutoffIndex]) : null
+    const serviceName = serviceIndex >= 0 ? readStringCell(row[serviceIndex]) || fallbackServiceName : fallbackServiceName
+    const accountType = typeIndex >= 0 ? readStringCell(row[typeIndex]) || fallbackAccountType : fallbackAccountType
+    const key = `${profile.id}:${serviceName.toLowerCase()}:${email}`
+
+    if (seen.has(key)) {
+      omitted.push({ email, reason: `duplicado para ${username}` })
+      return
+    }
+
+    seen.add(key)
+    assignments.push({
+      email,
+      userId: profile.id,
+      username: profile.username,
+      cutoffDate,
+      serviceName,
+      accountType,
+    })
+  })
+
+  return NextResponse.json({
+    message: `Se asignaran ${assignments.length} cuentas.`,
+    excelPreview: {
+      totalRows: Math.max(rows.length - 1, 0),
+      assignments,
+      omitted,
+    },
+  })
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => ({}))) as {
@@ -109,7 +285,10 @@ export async function POST(request: NextRequest) {
         userId?: string
         email?: string
         cutoffDate?: string | null
+        serviceName?: string
+        accountType?: string
       }>
+      fileDataUrl?: string
       serviceName?: string
       accountType?: string
       cutoffDate?: string
@@ -119,6 +298,11 @@ export async function POST(request: NextRequest) {
     }
 
     const action = String(body.action || '').trim()
+
+    if (action === 'preview_excel') {
+      const session = await requirePanelSession(request, true)
+      return await previewExcelAssignments(session, body)
+    }
 
     if (action === 'assign') {
       const session = await requirePanelSession(request, true)
@@ -131,6 +315,8 @@ export async function POST(request: NextRequest) {
                 userId: String(item.userId || '').trim(),
                 accountEmail: String(item.email || '').trim().toLowerCase(),
                 cutoffDate: parseNullableDate(item.cutoffDate),
+                serviceName: String(item.serviceName || body.serviceName || 'Netflix').trim() || 'Netflix',
+                accountType: String(item.accountType || body.accountType || 'Cuenta completa').trim() || 'Cuenta completa',
               }))
               .filter(item => item.userId && item.accountEmail)
           : Array.from(
@@ -143,6 +329,8 @@ export async function POST(request: NextRequest) {
               userId,
               accountEmail,
               cutoffDate: parseNullableDate(body.cutoffDate),
+              serviceName: String(body.serviceName || 'Netflix').trim() || 'Netflix',
+              accountType: String(body.accountType || 'Cuenta completa').trim() || 'Cuenta completa',
             }))
       const serviceName = String(body.serviceName || 'Netflix').trim() || 'Netflix'
       const accountType = String(body.accountType || 'Cuenta completa').trim() || 'Cuenta completa'
@@ -180,7 +368,7 @@ export async function POST(request: NextRequest) {
 
       const uniqueAssignments = Array.from(
         new Map(
-          assignments.map(item => [`${item.userId}:${serviceName}:${item.accountEmail}`, item])
+          assignments.map(item => [`${item.userId}:${item.serviceName || serviceName}:${item.accountEmail}`, item])
         ).values()
       )
 
@@ -191,9 +379,9 @@ export async function POST(request: NextRequest) {
         parent_account_id: null,
         root_account_id: null,
         assignment_depth: 0,
-        service_name: serviceName,
+        service_name: item.serviceName || serviceName,
         account_email: item.accountEmail,
-        account_type: accountType,
+        account_type: item.accountType || accountType,
         cutoff_date: item.cutoffDate,
         renewal_price: renewalPrice,
         renewal_period_days: renewalPeriodDays,

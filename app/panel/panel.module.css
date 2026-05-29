@@ -1147,6 +1147,77 @@
   cursor: pointer;
 }
 
+.excelImportCard {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 82, 92, 0.18);
+  background:
+    radial-gradient(circle at 94% 10%, rgba(255, 35, 48, 0.16), transparent 30%),
+    rgba(255, 255, 255, 0.025);
+}
+
+.excelImportHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.excelImportHeader > div {
+  display: grid;
+  gap: 5px;
+}
+
+.excelImportHeader strong {
+  color: #fff;
+  font-size: 1rem;
+}
+
+.excelImportHeader small {
+  color: rgba(255, 255, 255, 0.64);
+  font-weight: 800;
+}
+
+.excelPreviewGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.excelPreviewGood,
+.excelPreviewBad {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+}
+
+.excelPreviewGood {
+  border: 1px solid rgba(70, 255, 153, 0.22);
+  background: rgba(24, 119, 71, 0.12);
+}
+
+.excelPreviewBad {
+  border: 1px solid rgba(255, 88, 88, 0.22);
+  background: rgba(135, 27, 34, 0.14);
+}
+
+.excelPreviewGood strong,
+.excelPreviewBad strong {
+  color: #fff;
+}
+
+.excelPreviewList {
+  max-height: 170px;
+  overflow-y: auto;
+  display: grid;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.78);
+}
+
 .searchOption,
 .searchOptionActive {
   display: flex;
