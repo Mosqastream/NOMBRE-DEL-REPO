@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
+import { fetchSdnetpanelMessages, isSdnetpanelConfigured } from '@/lib/codes-sdnetpanel'
+import { getNetflixActionPayload } from '@/lib/codes-netflix-actions'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -311,6 +313,44 @@ async function readNetflixClientMails(recipient: string) {
   }
 }
 
+async function readSdnetpanelClientMails(recipient: string) {
+  const grouped: Record<ClienteKind, ClienteMailResult[]> = {
+    travel: [],
+    household: [],
+  }
+
+  if (!isSdnetpanelConfigured()) return grouped
+
+  const result = await fetchSdnetpanelMessages({
+    platform: 'netflix',
+    recipient,
+  })
+
+  for (const message of result.messages) {
+    const action = getNetflixActionPayload({
+      subject: message.subject,
+      bodyText: message.bodyText,
+      bodyHtml: message.bodyHtml,
+    })
+    const kind = action.kind === 'travel' || action.kind === 'household' ? action.kind : null
+    if (!kind) continue
+
+    grouped[kind].push({
+      id: `${kind}-${message.messageId}`,
+      subject: message.subject || KIND_RULES[kind].title,
+      from: message.from,
+      receivedAt: message.date.toISOString(),
+      actionUrl: action.url,
+      actionLabel: action.label || KIND_RULES[kind].title,
+      snippet: buildSnippet(`${message.subject}\n${message.bodyText}`),
+      bodyHtml: message.bodyHtml,
+      bodyText: message.bodyText,
+    })
+  }
+
+  return grouped
+}
+
 export async function GET(request: NextRequest) {
   try {
     const recipient = ensureRecipient(request.nextUrl.searchParams.get('recipient') || '')
@@ -318,11 +358,34 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Ingresa un correo valido.' }, { status: 400 })
     }
 
-    const grouped = await readNetflixClientMails(recipient)
+    const grouped: Record<ClienteKind, ClienteMailResult[]> = {
+      travel: [],
+      household: [],
+    }
+    const errors: string[] = []
+
+    for (const loader of [readNetflixClientMails, readSdnetpanelClientMails]) {
+      try {
+        const result = await loader(recipient)
+        grouped.travel.push(...result.travel)
+        grouped.household.push(...result.household)
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : 'Fuente no disponible.')
+      }
+    }
+
+    if (grouped.travel.length === 0 && grouped.household.length === 0 && errors.length > 0) {
+      throw new Error(errors[0])
+    }
+
     return NextResponse.json({
       recipient,
-      travel: grouped.travel.slice(0, 8),
-      household: grouped.household.slice(0, 8),
+      travel: grouped.travel
+        .sort((a, b) => new Date(b.receivedAt || 0).getTime() - new Date(a.receivedAt || 0).getTime())
+        .slice(0, 8),
+      household: grouped.household
+        .sort((a, b) => new Date(b.receivedAt || 0).getTime() - new Date(a.receivedAt || 0).getTime())
+        .slice(0, 8),
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'No se pudieron leer los correos.'

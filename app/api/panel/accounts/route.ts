@@ -295,6 +295,7 @@ export async function POST(request: NextRequest) {
       renewalPrice?: number
       renewalPeriodDays?: number
       status?: string
+      nextEmail?: string
     }
 
     const action = String(body.action || '').trim()
@@ -564,11 +565,36 @@ export async function POST(request: NextRequest) {
         throw new PanelApiError('Cuenta no valida.', 400)
       }
 
+      const accountChainResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .select('id, owner_id, assigned_by_id, root_account_id')
+        .eq('id', accountId)
+        .maybeSingle()
+
+      if (accountChainResp.error) {
+        throw new PanelApiError(accountChainResp.error.message, 500)
+      }
+
+      const accountChain = (accountChainResp.data || null) as {
+        id: string
+        owner_id: string
+        assigned_by_id?: string | null
+        root_account_id?: string | null
+      } | null
+
+      if (!accountChain?.id) {
+        throw new PanelApiError('Cuenta no encontrada.', 404)
+      }
+
+      if (accountChain.owner_id !== session.profile.id && accountChain.assigned_by_id !== session.profile.id) {
+        throw new PanelApiError('No puedes quitar esa cuenta.', 403)
+      }
+
+      const rootAccountId = accountChain.root_account_id || accountChain.id
       const deleteResp = await session.supabaseAdmin
         .from('service_accounts')
         .delete()
-        .eq('id', accountId)
-        .or(`owner_id.eq.${session.profile.id},assigned_by_id.eq.${session.profile.id}`)
+        .or(`id.eq.${accountId},parent_account_id.eq.${accountId}${accountChain.owner_id === session.profile.id ? `,root_account_id.eq.${rootAccountId}` : ''}`)
         .select('id')
 
       if (deleteResp.error) {
@@ -581,6 +607,107 @@ export async function POST(request: NextRequest) {
       }
 
       return NextResponse.json({ message: 'Cuenta retirada.', accountId })
+    }
+
+    if (action === 'update') {
+      const session = await requirePanelSession(request, true)
+      const accountId = String(body.accountId || '').trim()
+      const nextEmail = String(body.nextEmail || '').trim().toLowerCase()
+      const serviceName = String(body.serviceName || 'Netflix').trim() || 'Netflix'
+      const accountType = String(body.accountType || 'Cuenta completa').trim() || 'Cuenta completa'
+      const cutoffDate = parseNullableDate(body.cutoffDate)
+      const renewalPrice = parseMoney(body.renewalPrice, 0)
+      const renewalPeriodDays = Math.max(1, Number(body.renewalPeriodDays || 30) || 30)
+      const status = String(body.status || 'activa').trim() as ServiceAccountStatus
+
+      if (!accountId) {
+        throw new PanelApiError('Cuenta no valida.', 400)
+      }
+
+      if (!nextEmail || !nextEmail.includes('@')) {
+        throw new PanelApiError('Ingresa un correo valido.', 400)
+      }
+
+      if (!ACCOUNT_STATUSES.has(status)) {
+        throw new PanelApiError('Estado de cuenta no valido.', 400)
+      }
+
+      const accountResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .select(
+          'id, owner_id, assigned_user_id, root_account_id, account_email, service_name, account_type, cutoff_date, renewal_price, renewal_period_days, status'
+        )
+        .eq('id', accountId)
+        .eq('owner_id', session.profile.id)
+        .maybeSingle()
+
+      if (accountResp.error) {
+        throw new PanelApiError(accountResp.error.message, 500)
+      }
+
+      const account = (accountResp.data || null) as AccountRow | null
+      if (!account?.id) {
+        throw new PanelApiError('No se encontro la cuenta para editar.', 404)
+      }
+
+      const rootAccountId = account.root_account_id || account.id
+      const now = new Date().toISOString()
+      const updateResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .update({
+          service_name: serviceName,
+          account_email: nextEmail,
+          account_type: accountType,
+          cutoff_date: cutoffDate,
+          renewal_price: renewalPrice,
+          renewal_period_days: renewalPeriodDays,
+          status,
+          updated_at: now,
+        } as never)
+        .eq('owner_id', session.profile.id)
+        .or(`id.eq.${rootAccountId},root_account_id.eq.${rootAccountId}`)
+        .select(
+          'id, owner_id, assigned_user_id, assigned_by_id, parent_account_id, root_account_id, assignment_depth, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
+        )
+
+      if (updateResp.error) {
+        throw new PanelApiError(updateResp.error.message, 500)
+      }
+
+      const updatedRows = (updateResp.data || []) as AccountRow[]
+      if (updatedRows.length === 0) {
+        throw new PanelApiError('No se actualizo ninguna cuenta.', 404)
+      }
+
+      const requesterIds = Array.from(new Set(updatedRows.map(row => row.assigned_user_id).filter(Boolean)))
+      const historyRows = requesterIds.map(requesterId => ({
+        account_email: nextEmail,
+        service_name: serviceName,
+        requester_id: requesterId,
+        owner_id: session.profile.id,
+        request_kind: 'issue',
+        subject: 'Cuenta actualizada',
+        description: `Se actualizo la cuenta ${account.account_email || 'anterior'} por ${nextEmail}.`,
+        summary: `Cuenta actualizada: ${account.account_email || 'anterior'} -> ${nextEmail}`,
+        message_count: 0,
+        last_message_preview: `El proveedor actualizo datos de ${serviceName}.`,
+        closed_by_id: session.profile.id,
+        created_at: now,
+      }))
+
+      if (historyRows.length > 0) {
+        await session.supabaseAdmin.from('support_request_history').insert(historyRows as never)
+      }
+
+      return NextResponse.json({
+        message: 'Cuenta actualizada para toda la cadena.',
+        accounts: updatedRows.map(row =>
+          mapAssignedAccount({
+            row: row as Required<Pick<AccountRow, 'id' | 'owner_id' | 'assigned_user_id'>> & AccountRow,
+            ownerUsername: session.profile.username,
+          })
+        ),
+      })
     }
 
     const session = await requirePanelSession(request)

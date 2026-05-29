@@ -1361,6 +1361,40 @@
   align-items: start;
 }
 
+.ownerAccountTools {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 10px;
+  margin: 12px 0 14px;
+}
+
+.iconActionButton,
+.iconDangerButton {
+  width: 40px;
+  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.11), transparent 55%),
+    rgba(255, 255, 255, 0.045);
+  color: #fff;
+  cursor: pointer;
+  font-size: 1rem;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.14);
+}
+
+.iconActionButton:hover {
+  border-color: rgba(255, 199, 89, 0.45);
+  background: rgba(255, 199, 89, 0.12);
+}
+
+.iconDangerButton:hover {
+  border-color: rgba(255, 67, 82, 0.5);
+  background: rgba(255, 36, 50, 0.16);
+}
+
 .ownerUserRail {
   display: grid;
   gap: 10px;
@@ -1842,6 +1876,10 @@
 
   .ownerUserOption,
   .ownerUserOptionActive {
+    grid-template-columns: 1fr;
+  }
+
+  .ownerAccountTools {
     grid-template-columns: 1fr;
   }
 }

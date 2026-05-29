@@ -357,9 +357,10 @@ const fetchConfigMessages = async (config: SdnetpanelConfig, params: { platform:
     return { messages: [] as SdnetpanelMessage[], totalScanned: 0, variantsScanned: [] as string[] }
   }
 
-  const settled = await Promise.allSettled(
-    functions.map(func =>
-      searchFunctionMessages({
+  const messages: SdnetpanelMessage[] = []
+  for (const func of functions) {
+    try {
+      const result = await searchFunctionMessages({
         accountId: config.id,
         accountLabel: config.label,
         baseUrl: config.baseUrl,
@@ -369,12 +370,11 @@ const fetchConfigMessages = async (config: SdnetpanelConfig, params: { platform:
         recipient: params.recipient,
         token,
       })
-    )
-  )
-
-  const messages = settled
-    .filter((result): result is PromiseFulfilledResult<SdnetpanelMessage[]> => result.status === 'fulfilled')
-    .flatMap(result => result.value)
+      messages.push(...result)
+    } catch {
+      // Keep the rest of the SDNetPanel functions alive if one endpoint/session flakes.
+    }
+  }
 
   return {
     messages,
@@ -392,34 +392,35 @@ export const fetchSdnetpanelMessages = async (params: {
     return { messages: [], totalScanned: 0, variantsScanned: [] }
   }
 
-  const settled = await Promise.allSettled(
-    configs.map(config =>
-      fetchConfigMessages(config, {
-        platform: params.platform,
-        recipient: params.recipient,
-      })
-    )
-  )
+  const successful: Array<{
+    messages: SdnetpanelMessage[]
+    totalScanned: number
+    variantsScanned: string[]
+  }> = []
+  const failed: unknown[] = []
 
-  const successful = settled.filter(
-    (
-      result
-    ): result is PromiseFulfilledResult<{
-      messages: SdnetpanelMessage[]
-      totalScanned: number
-      variantsScanned: string[]
-    }> => result.status === 'fulfilled'
-  )
-  const failed = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-
-  if (successful.length === 0 && failed.length > 0) {
-    throw failed[0].reason instanceof Error ? failed[0].reason : new Error('SDPanel no pudo cargar ninguna cuenta.')
+  for (const config of configs) {
+    try {
+      successful.push(
+        await fetchConfigMessages(config, {
+          platform: params.platform,
+          recipient: params.recipient,
+        })
+      )
+    } catch (error) {
+      failed.push(error)
+    }
   }
 
-  const messages = successful.flatMap(result => result.value.messages)
-  const totalScanned = successful.reduce((sum, result) => sum + result.value.totalScanned, 0)
+  if (successful.length === 0 && failed.length > 0) {
+    const firstError = failed[0]
+    throw firstError instanceof Error ? firstError : new Error('SDPanel no pudo cargar ninguna cuenta.')
+  }
+
+  const messages = successful.flatMap(result => result.messages)
+  const totalScanned = successful.reduce((sum, result) => sum + result.totalScanned, 0)
   const variantsScanned = Array.from(
-    new Set(successful.flatMap(result => result.value.variantsScanned).filter(Boolean))
+    new Set(successful.flatMap(result => result.variantsScanned).filter(Boolean))
   )
 
   return {

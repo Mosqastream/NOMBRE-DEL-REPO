@@ -268,6 +268,47 @@ export async function POST(request: NextRequest) {
         throw new PanelApiError(messageResp.error.message, 500)
       }
 
+      const requesterResp = await session.supabaseAdmin
+        .from('profiles')
+        .select('id, username, parent_id')
+        .eq('id', currentRequest.requester_id)
+        .maybeSingle()
+
+      const requester = (requesterResp.data || null) as {
+        id: string
+        username?: string | null
+        parent_id?: string | null
+      } | null
+      const historyRequesterIds = Array.from(
+        new Set([currentRequest.requester_id, requester?.parent_id].filter(Boolean) as string[])
+      )
+      const now = new Date().toISOString()
+
+      if (historyRequesterIds.length > 0) {
+        await session.supabaseAdmin.from('support_request_history').insert(
+          historyRequesterIds.map(requesterId => ({
+            account_email: accountEmail,
+            service_name: currentRequest.service_accounts?.service_name || null,
+            requester_id: requesterId,
+            owner_id: currentRequest.owner_id,
+            request_kind: currentRequest.request_kind,
+            subject: 'Reemplazo entregado',
+            description:
+              requester?.parent_id && requesterId === requester.parent_id
+                ? `Tu subcliente ${requester.username || 'subcliente'} abrio ticket y se le brindo reemplazo de la cuenta ${currentRequest.service_accounts?.account_email || 'anterior'} por ${accountEmail}.`
+                : `Se brindo reemplazo de la cuenta ${currentRequest.service_accounts?.account_email || 'anterior'} por ${accountEmail}.`,
+            summary:
+              requester?.parent_id && requesterId === requester.parent_id
+                ? `Tu subcliente ${requester.username || 'subcliente'} recibio reemplazo: ${currentRequest.service_accounts?.account_email || 'anterior'} -> ${accountEmail}`
+                : `Reemplazo recibido: ${currentRequest.service_accounts?.account_email || 'anterior'} -> ${accountEmail}`,
+            message_count: 1,
+            last_message_preview: `Correo reemplazado exitosamente: ${accountEmail}`,
+            closed_by_id: session.profile.id,
+            created_at: now,
+          })) as never
+        )
+      }
+
       const updateRequestResp = await session.supabaseAdmin
         .from('support_requests')
         .update({

@@ -67,6 +67,17 @@ type AssignForm = {
   emailsText: string
 }
 
+type AccountEditForm = {
+  id: string
+  serviceName: string
+  accountEmail: string
+  accountType: string
+  cutoffDate: string
+  renewalPrice: string
+  renewalPeriodDays: string
+  status: string
+}
+
 type ProductSpecialDraft = {
   userId: string
   specialPrice: string
@@ -158,6 +169,17 @@ const defaultAssignForm: AssignForm = {
   renewalPrice: '',
   renewalPeriodDays: '30',
   emailsText: '',
+}
+
+const defaultAccountEditForm: AccountEditForm = {
+  id: '',
+  serviceName: 'Netflix',
+  accountEmail: '',
+  accountType: 'Cuenta completa',
+  cutoffDate: '',
+  renewalPrice: '',
+  renewalPeriodDays: '30',
+  status: 'activa',
 }
 
 const defaultProductForm = (providerName = ''): ProductForm => ({
@@ -302,6 +324,23 @@ function replaceAccountEmailInPayload(
       accounts: (user.accounts || []).map(account =>
         shouldReplace(account) ? { ...account, accountEmail, updatedAt: new Date().toISOString() } : account
       ),
+    })),
+  })
+}
+
+function updateAccountsInPayload(
+  payload: PanelBootstrapPayload,
+  accounts: PanelAccount[]
+): PanelBootstrapPayload {
+  if (accounts.length === 0) return payload
+  const byId = new Map(accounts.map(account => [account.id, account]))
+
+  return normalizePanelPayload({
+    ...payload,
+    accounts: (payload.accounts || []).map(account => byId.get(account.id) || account),
+    allUsers: (payload.allUsers || []).map(user => ({
+      ...user,
+      accounts: (user.accounts || []).map(account => byId.get(account.id) || account),
     })),
   })
 }
@@ -507,6 +546,7 @@ export default function PanelPage() {
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
   const [expandedUserId, setExpandedUserId] = useState<string | null>('all')
   const [ownerUserSearch, setOwnerUserSearch] = useState('')
+  const [ownerAccountSearch, setOwnerAccountSearch] = useState('')
   const [ownerAccountFilter, setOwnerAccountFilter] = useState<OwnerAccountFilter>('todos')
   const [userAccountFilter, setUserAccountFilter] = useState<UserAccountFilter>('todos')
   const [supportChoiceAccount, setSupportChoiceAccount] = useState<PanelAccount | null>(null)
@@ -536,6 +576,8 @@ export default function PanelPage() {
   const [renewalProofDataUrl, setRenewalProofDataUrl] = useState<string | null>(null)
   const [purchaseProofDataUrl, setPurchaseProofDataUrl] = useState<string | null>(null)
   const [assignForm, setAssignForm] = useState<AssignForm>(defaultAssignForm)
+  const [editAccountOpen, setEditAccountOpen] = useState(false)
+  const [editAccountForm, setEditAccountForm] = useState<AccountEditForm>(defaultAccountEditForm)
   const [productForm, setProductForm] = useState<ProductForm>(defaultProductForm())
   const [settingsForm, setSettingsForm] = useState<SettingsForm>(defaultSettingsForm)
   const [telegramAccounts, setTelegramAccounts] = useState<TelegramAccount[]>([])
@@ -757,6 +799,22 @@ export default function PanelPage() {
           }))
 
     return baseAccounts.filter(account => {
+      const term = ownerAccountSearch.trim().toLowerCase()
+      if (
+        term &&
+        ![
+          account.accountEmail,
+          account.clientUsername,
+          account.serviceName,
+          account.ownerUsername,
+        ]
+          .join(' ')
+          .toLowerCase()
+          .includes(term)
+      ) {
+        return false
+      }
+
       const safeDays = getSafeDaysRemaining(account.daysRemaining)
 
       if (ownerAccountFilter === 'vigentes') {
@@ -773,7 +831,7 @@ export default function PanelPage() {
 
       return true
     })
-  }, [expandedUserId, ownerAllAccounts, ownerAccountFilter, selectedOwnerUser])
+  }, [expandedUserId, ownerAccountSearch, ownerAllAccounts, ownerAccountFilter, selectedOwnerUser])
 
   useEffect(() => {
     let active = true
@@ -1739,6 +1797,70 @@ export default function PanelPage() {
     }
   }
 
+  const openEditAccount = (account: PanelAccount) => {
+    setEditAccountForm({
+      id: account.id,
+      serviceName: account.serviceName,
+      accountEmail: account.accountEmail,
+      accountType: account.accountType,
+      cutoffDate: account.cutoffDate || '',
+      renewalPrice: String(account.renewalPrice || ''),
+      renewalPeriodDays: String(account.renewalPeriodDays || 30),
+      status: account.status,
+    })
+    setEditAccountOpen(true)
+  }
+
+  const submitEditAccount = async () => {
+    setSaving(true)
+    setError('')
+    try {
+      const payload = await callPanelApi('/api/panel/accounts', {
+        action: 'update',
+        accountId: editAccountForm.id,
+        nextEmail: editAccountForm.accountEmail,
+        serviceName: editAccountForm.serviceName,
+        accountType: editAccountForm.accountType,
+        cutoffDate: editAccountForm.cutoffDate || null,
+        renewalPrice: Number(editAccountForm.renewalPrice || 0),
+        renewalPeriodDays: Number(editAccountForm.renewalPeriodDays || 30),
+        status: editAccountForm.status,
+      })
+
+      if (payload.accounts?.length) {
+        setPanelData(current => (current ? updateAccountsInPayload(current, payload.accounts || []) : current))
+      }
+
+      setEditAccountOpen(false)
+      setEditAccountForm(defaultAccountEditForm)
+      setNotice(payload.message || 'Cuenta actualizada.')
+      await refreshPanel(true)
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'No se pudo editar la cuenta.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const exportOwnerAccounts = async () => {
+    const rows = filteredOwnerAccounts.map(account => ({
+      Servicio: account.serviceName,
+      Cuenta: account.accountEmail,
+      Tipo: account.accountType,
+      Estado: account.status,
+      Cliente: account.clientUsername,
+      Propietario: account.ownerUsername,
+      Corte: account.cutoffDate || '',
+      Dias: getSafeDaysRemaining(account.daysRemaining) ?? '',
+    }))
+
+    const XLSX = await import('xlsx')
+    const worksheet = XLSX.utils.json_to_sheet(rows)
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Cuentas')
+    XLSX.writeFile(workbook, `cuentas-owner-${new Date().toISOString().slice(0, 10)}.xlsx`)
+  }
+
   const addSpecialPriceRow = () => {
     if (!productForm.pendingUserId || !productForm.pendingSpecialPrice) return
     setProductForm(current => ({
@@ -2679,6 +2801,18 @@ export default function PanelPage() {
             </div>
           </div>
 
+          <div className={styles.ownerAccountTools}>
+            <input
+              className={styles.input}
+              placeholder='Buscar por correo, cliente o servicio'
+              value={ownerAccountSearch}
+              onChange={event => setOwnerAccountSearch(event.target.value)}
+            />
+            <button type='button' className={styles.secondaryButton} onClick={() => void exportOwnerAccounts()}>
+              Exportar Excel
+            </button>
+          </div>
+
           {filteredOwnerAccounts.length === 0 ? (
             <div className={styles.emptyCard}>No hay cuentas para ese filtro.</div>
           ) : (
@@ -2711,10 +2845,19 @@ export default function PanelPage() {
                           <div className={styles.inlineActions}>
                             <button
                               type='button'
-                              className={styles.ghostButton}
+                              className={styles.iconActionButton}
+                              title='Editar cuenta'
+                              onClick={() => openEditAccount(account)}
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              type='button'
+                              className={styles.iconDangerButton}
+                              title='Quitar cuenta'
                               onClick={() => void removeAccount(account.id)}
                             >
-                              Quitar cuenta
+                              🗑️
                             </button>
                           </div>
                         </td>
@@ -2743,10 +2886,19 @@ export default function PanelPage() {
                     <div className={styles.inlineActions}>
                       <button
                         type='button'
-                        className={styles.ghostButton}
+                        className={styles.iconActionButton}
+                        title='Editar cuenta'
+                        onClick={() => openEditAccount(account)}
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        type='button'
+                        className={styles.iconDangerButton}
+                        title='Quitar cuenta'
                         onClick={() => void removeAccount(account.id)}
                       >
-                        Quitar cuenta
+                        🗑️
                       </button>
                     </div>
                   </article>
@@ -4219,6 +4371,103 @@ export default function PanelPage() {
                 disabled={saving}
               >
                 Guardar asignacion
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editAccountOpen && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modalCard}>
+            <div className={styles.modalHeader}>
+              <div>
+                <span className={styles.blockEyebrow}>Cuenta</span>
+                <h3>Editar cuenta</h3>
+              </div>
+              <button
+                type='button'
+                className={styles.modalClose}
+                onClick={() => {
+                  setEditAccountOpen(false)
+                  setEditAccountForm(defaultAccountEditForm)
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className={styles.formStack}>
+              <input
+                className={styles.input}
+                placeholder='Servicio'
+                value={editAccountForm.serviceName}
+                onChange={event => setEditAccountForm(current => ({ ...current, serviceName: event.target.value }))}
+              />
+              <input
+                className={styles.input}
+                placeholder='Correo'
+                value={editAccountForm.accountEmail}
+                onChange={event => setEditAccountForm(current => ({ ...current, accountEmail: event.target.value }))}
+              />
+              <input
+                className={styles.input}
+                placeholder='Tipo'
+                value={editAccountForm.accountType}
+                onChange={event => setEditAccountForm(current => ({ ...current, accountType: event.target.value }))}
+              />
+              <label className={styles.fieldLabel}>
+                <span>Fecha de corte</span>
+                <input
+                  className={styles.input}
+                  type='date'
+                  value={editAccountForm.cutoffDate}
+                  onChange={event => setEditAccountForm(current => ({ ...current, cutoffDate: event.target.value }))}
+                />
+              </label>
+              <input
+                className={styles.input}
+                placeholder='Precio de renovacion'
+                value={editAccountForm.renewalPrice}
+                inputMode='decimal'
+                onChange={event =>
+                  setEditAccountForm(current => ({
+                    ...current,
+                    renewalPrice: sanitizeNumericInput(event.target.value),
+                  }))
+                }
+              />
+              <input
+                className={styles.input}
+                placeholder='Dias de renovacion'
+                value={editAccountForm.renewalPeriodDays}
+                inputMode='numeric'
+                onChange={event =>
+                  setEditAccountForm(current => ({
+                    ...current,
+                    renewalPeriodDays: event.target.value.replace(/\D/g, ''),
+                  }))
+                }
+              />
+              <select
+                className={styles.input}
+                value={editAccountForm.status}
+                onChange={event => setEditAccountForm(current => ({ ...current, status: event.target.value }))}
+              >
+                <option value='activa'>Activa</option>
+                <option value='pausada'>Pausada</option>
+                <option value='sin_pago'>Sin pago</option>
+                <option value='desactivada'>Desactivada</option>
+              </select>
+              <div className={styles.assignHint}>
+                Este cambio se aplica a la cuenta principal y a todos sus subclientes.
+              </div>
+              <button
+                type='button'
+                className={styles.primaryButton}
+                onClick={() => void submitEditAccount()}
+                disabled={saving}
+              >
+                Guardar cambios
               </button>
             </div>
           </div>
