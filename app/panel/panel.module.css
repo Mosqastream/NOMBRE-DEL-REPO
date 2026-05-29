@@ -1037,6 +1037,8 @@
 
 .modalCardWide {
   width: min(100%, 760px);
+  max-height: min(820px, calc(100vh - 48px));
+  overflow-y: auto;
 }
 
 .modalHeader {
