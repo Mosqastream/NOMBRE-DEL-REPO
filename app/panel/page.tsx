@@ -38,6 +38,8 @@ const OWNER_SECTIONS = [
   { id: 'historial', label: 'Historial', icon: 'clock' },
 ] as const
 
+const PAGE_SIZE = 8
+
 type SectionIconName =
   | (typeof USER_SECTIONS)[number]['icon']
   | (typeof OWNER_SECTIONS)[number]['icon']
@@ -419,6 +421,7 @@ export default function PanelPage() {
   const [assignForm, setAssignForm] = useState<AssignForm>(defaultAssignForm)
   const [productForm, setProductForm] = useState<ProductForm>(defaultProductForm())
   const [settingsForm, setSettingsForm] = useState<SettingsForm>(defaultSettingsForm)
+  const [pageByKey, setPageByKey] = useState<Record<string, number>>({})
   const realtimeRefreshRef = useRef<number | null>(null)
   const realtimePollRef = useRef<number | null>(null)
   const refreshInFlightRef = useRef(false)
@@ -427,6 +430,27 @@ export default function PanelPage() {
 
   const profile = panelData?.profile ?? null
   const panelRole: PanelRole = profile?.role || 'usuario'
+
+  const getCurrentPage = (key: string, totalItems: number) => {
+    const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE))
+    const rawPage = pageByKey[key] || 1
+    return Math.min(Math.max(rawPage, 1), totalPages)
+  }
+
+  const getPageItems = <T,>(key: string, items: T[]) => {
+    const page = getCurrentPage(key, items.length)
+    const start = (page - 1) * PAGE_SIZE
+    return items.slice(start, start + PAGE_SIZE)
+  }
+
+  const setListPage = (key: string, nextPage: number, totalItems: number) => {
+    const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE))
+    const safePage = Math.min(Math.max(nextPage, 1), totalPages)
+    setPageByKey(current => ({
+      ...current,
+      [key]: safePage,
+    }))
+  }
 
   const visibleSections = useMemo(
     () => (panelView === 'owner' ? OWNER_SECTIONS : USER_SECTIONS),
@@ -486,6 +510,13 @@ export default function PanelPage() {
     if (!term) return rawUsers
     return rawUsers.filter(item => item.username.toLowerCase().includes(term))
   }, [assignSearch, panelData?.allUsers])
+
+  const productSpecialUsers = useMemo(() => {
+    const rawUsers = panelData?.allUsers || []
+    const term = productForm.search.trim().toLowerCase()
+    if (!term) return rawUsers
+    return rawUsers.filter(item => item.username.toLowerCase().includes(term))
+  }, [panelData?.allUsers, productForm.search])
 
   const ownerUsers = useMemo(() => {
     const rawUsers = panelData?.allUsers || []
@@ -1343,6 +1374,44 @@ export default function PanelPage() {
     return <span className={badgeClass}>{safeValue === null ? 'Sin fecha' : `${safeValue} dias`}</span>
   }
 
+  const renderPagination = (key: string, totalItems: number) => {
+    if (totalItems <= PAGE_SIZE) return null
+
+    const page = getCurrentPage(key, totalItems)
+    const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE))
+    const start = (page - 1) * PAGE_SIZE + 1
+    const end = Math.min(page * PAGE_SIZE, totalItems)
+
+    return (
+      <div className={styles.paginationBar}>
+        <span>
+          {start}-{end} de {totalItems}
+        </span>
+        <div className={styles.paginationActions}>
+          <button
+            type='button'
+            className={styles.ghostButton}
+            onClick={() => setListPage(key, page - 1, totalItems)}
+            disabled={page <= 1}
+          >
+            Anterior
+          </button>
+          <span className={styles.pagePill}>
+            {page}/{totalPages}
+          </span>
+          <button
+            type='button'
+            className={styles.secondaryButton}
+            onClick={() => setListPage(key, page + 1, totalItems)}
+            disabled={page >= totalPages}
+          >
+            Siguiente
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   const renderProductStockBadge = (inStock: boolean) => (
     <span className={inStock ? styles.productStockLive : styles.productStockOff}>
       {inStock ? 'Activa' : 'Sin stock'}
@@ -1379,6 +1448,8 @@ export default function PanelPage() {
 
   const renderAccountsSection = () => {
     const accounts = panelData?.accounts || []
+    const pageKey = 'user-accounts'
+    const pageAccounts = getPageItems(pageKey, accounts)
 
     return (
       <div className={styles.sectionStack}>
@@ -1409,7 +1480,7 @@ export default function PanelPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {accounts.map(account => (
+                    {pageAccounts.map(account => (
                       <tr key={account.id}>
                         <td>{account.serviceName}</td>
                         <td>{account.accountEmail}</td>
@@ -1443,7 +1514,7 @@ export default function PanelPage() {
               </div>
 
               <div className={styles.cardGrid}>
-                {accounts.map(account => (
+                {pageAccounts.map(account => (
                   <article key={`${account.id}-card`} className={styles.miniCard}>
                     <div className={styles.miniCardHead}>
                       <strong>{account.serviceName}</strong>
@@ -1475,6 +1546,8 @@ export default function PanelPage() {
                   </article>
                 ))}
               </div>
+
+              {renderPagination(pageKey, accounts.length)}
             </>
           )}
         </div>
@@ -1660,7 +1733,11 @@ export default function PanelPage() {
     </div>
   )
 
-  const renderHistorialSection = (ownerMode: boolean) => (
+  const renderHistorialSection = (ownerMode: boolean) => {
+    const pageKey = ownerMode ? 'owner-history' : 'user-history'
+    const pageHistory = getPageItems(pageKey, currentHistory)
+
+    return (
     <div className={styles.sectionStack}>
       <div className={styles.blockCard}>
         <div className={styles.blockHeader}>
@@ -1673,8 +1750,9 @@ export default function PanelPage() {
         {currentHistory.length === 0 ? (
           <div className={styles.emptyCard}>Todavia no hay tickets cerrados en historial.</div>
         ) : (
+          <>
           <div className={styles.cardGrid}>
-            {currentHistory.map(item => (
+            {pageHistory.map(item => (
               <article key={item.id} className={styles.miniCard}>
                 <div className={styles.miniCardHead}>
                   <strong>{item.subject}</strong>
@@ -1688,10 +1766,13 @@ export default function PanelPage() {
               </article>
             ))}
           </div>
+          {renderPagination(pageKey, currentHistory.length)}
+          </>
         )}
       </div>
     </div>
-  )
+    )
+  }
 
   const renderComprasSection = () => {
     const products = panelData?.products || []
@@ -1836,7 +1917,13 @@ export default function PanelPage() {
     )
   }
 
-  const renderOwnerUsersSectionV2 = () => (
+  const renderOwnerUsersSectionV2 = () => {
+    const usersPageKey = 'owner-users'
+    const accountsPageKey = `owner-accounts-${expandedUserId}-${ownerAccountFilter}`
+    const pageOwnerUsers = getPageItems(usersPageKey, ownerUsers)
+    const pageOwnerAccounts = getPageItems(accountsPageKey, filteredOwnerAccounts)
+
+    return (
     <div className={styles.sectionStack}>
       <div className={styles.ownerUsersLayout}>
         <div className={styles.blockCard}>
@@ -1874,7 +1961,7 @@ export default function PanelPage() {
               {ownerUsers.length === 0 ? (
                 <div className={styles.emptyCard}>No hay usuarios que coincidan con la busqueda.</div>
               ) : (
-                ownerUsers.map(user => (
+                pageOwnerUsers.map(user => (
                   <button
                     key={user.id}
                     type='button'
@@ -1894,6 +1981,7 @@ export default function PanelPage() {
                   </button>
                 ))
               )}
+              {renderPagination(usersPageKey, ownerUsers.length)}
             </div>
           </div>
         </div>
@@ -1961,7 +2049,7 @@ export default function PanelPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredOwnerAccounts.map(account => (
+                    {pageOwnerAccounts.map(account => (
                       <tr key={account.id}>
                         <td>{account.serviceName}</td>
                         <td>{account.accountEmail}</td>
@@ -1988,7 +2076,7 @@ export default function PanelPage() {
               </div>
 
               <div className={styles.cardGrid}>
-                {filteredOwnerAccounts.map(account => (
+                {pageOwnerAccounts.map(account => (
                   <article key={`${account.id}-owner-card`} className={styles.miniCard}>
                     <div className={styles.miniCardHead}>
                       <strong>{account.serviceName}</strong>
@@ -2015,12 +2103,14 @@ export default function PanelPage() {
                   </article>
                 ))}
               </div>
+              {renderPagination(accountsPageKey, filteredOwnerAccounts.length)}
             </>
           )}
         </div>
       </div>
     </div>
-  )
+    )
+  }
 
   const renderAssignSection = () => (
     <div className={styles.sectionStack}>
@@ -2149,7 +2239,11 @@ export default function PanelPage() {
     </div>
   )
 
-  const renderSupportSectionV2 = (ownerMode: boolean) => (
+  const renderSupportSectionV2 = (ownerMode: boolean) => {
+    const pageKey = ownerMode ? 'owner-requests' : 'user-requests'
+    const pageRequests = getPageItems(pageKey, currentRequests)
+
+    return (
     <div className={styles.sectionSplit}>
       <div className={styles.blockCard}>
         <div className={styles.blockHeader}>
@@ -2163,7 +2257,7 @@ export default function PanelPage() {
           <div className={styles.emptyCard}>Todavia no hay solicitudes en esta vista.</div>
         ) : (
           <div className={styles.requestList}>
-            {currentRequests.map(request => (
+            {pageRequests.map(request => (
               <button
                 key={request.id}
                 type='button'
@@ -2181,6 +2275,7 @@ export default function PanelPage() {
                 </div>
               </button>
             ))}
+            {renderPagination(pageKey, currentRequests.length)}
           </div>
         )}
       </div>
@@ -2318,10 +2413,13 @@ export default function PanelPage() {
         )}
       </div>
     </div>
-  )
+    )
+  }
 
   const renderComprasSectionV2 = () => {
     const products = panelData?.products || []
+    const pageKey = 'user-products'
+    const pageProducts = getPageItems(pageKey, products)
 
     return (
       <div className={styles.sectionStack}>
@@ -2336,47 +2434,56 @@ export default function PanelPage() {
           {products.length === 0 ? (
             <div className={styles.emptyCard}>Aun no hay planes disponibles para comprar.</div>
           ) : (
-            <div className={styles.productGrid}>
-              {products.map(product => (
-                <article key={product.id} className={styles.productCard}>
-                  {product.imageDataUrl ? (
-                    <img className={styles.productImage} src={product.imageDataUrl} alt={product.title} />
-                  ) : (
-                    <div className={styles.productPlaceholder}>Sin imagen</div>
-                  )}
-                  <div className={styles.productBody}>
-                    <div className={styles.productBadgeRow}>
-                      {renderProductStockBadge(product.inStock)}
-                    </div>
-                    <div className={styles.productHead}>
-                      <strong>{product.title}</strong>
-                    </div>
-                    <div className={styles.productMetaList}>
-                      <span className={styles.productProviderLabel}>Proveedor</span>
-                      <span className={styles.productOwnerLine}>{product.providerName}</span>
-                      <div className={styles.productPriceRow}>
-                        <span className={styles.productPricePill}>{formatMoney(product.effectivePrice)}</span>
+            <>
+              <div className={styles.productGrid}>
+                {pageProducts.map(product => (
+                  <article key={product.id} className={styles.productCard}>
+                    {product.imageDataUrl ? (
+                      <img className={styles.productImage} src={product.imageDataUrl} alt={product.title} />
+                    ) : (
+                      <div className={styles.productPlaceholder}>Sin imagen</div>
+                    )}
+                    <div className={styles.productBody}>
+                      <div className={styles.productBadgeRow}>
+                        {renderProductStockBadge(product.inStock)}
                       </div>
+                      <div className={styles.productHead}>
+                        <strong>{product.title}</strong>
+                      </div>
+                      <div className={styles.productMetaList}>
+                        <span className={styles.productProviderLabel}>Proveedor</span>
+                        <span className={styles.productOwnerLine}>{product.providerName}</span>
+                        <div className={styles.productPriceRow}>
+                          <span className={styles.productPricePill}>{formatMoney(product.effectivePrice)}</span>
+                        </div>
+                      </div>
+                      <button
+                        type='button'
+                        className={styles.productActionButton}
+                        onClick={() => setBuyProduct(product)}
+                        disabled={!product.inStock}
+                      >
+                        Comprar
+                      </button>
                     </div>
-                    <button
-                      type='button'
-                      className={styles.productActionButton}
-                      onClick={() => setBuyProduct(product)}
-                      disabled={!product.inStock}
-                    >
-                      Comprar
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
+                  </article>
+                ))}
+              </div>
+              {renderPagination(pageKey, products.length)}
+            </>
           )}
         </div>
       </div>
     )
   }
 
-  const renderVentasSectionV2 = () => (
+  const renderVentasSectionV2 = () => {
+    const productPageKey = 'owner-products'
+    const salePageKey = 'owner-sales'
+    const pageOwnerProducts = getPageItems(productPageKey, ownerProducts)
+    const pageOwnerSales = getPageItems(salePageKey, ownerSales)
+
+    return (
     <div className={styles.sectionStack}>
       <div className={styles.blockCard}>
         <div className={styles.blockHeader}>
@@ -2393,7 +2500,7 @@ export default function PanelPage() {
           {ownerProducts.length === 0 ? (
             <div className={styles.emptyCard}>Todavia no has creado productos.</div>
           ) : (
-            ownerProducts.map(product => (
+            pageOwnerProducts.map(product => (
                 <article key={product.id} className={styles.productCard}>
                   {product.imageDataUrl ? (
                     <img className={styles.productImage} src={product.imageDataUrl} alt={product.title} />
@@ -2438,6 +2545,7 @@ export default function PanelPage() {
             ))
           )}
         </div>
+        {renderPagination(productPageKey, ownerProducts.length)}
       </div>
 
       <div className={styles.blockCard}>
@@ -2452,7 +2560,7 @@ export default function PanelPage() {
           <div className={styles.emptyCard}>Todavia no hay ventas registradas.</div>
         ) : (
           <div className={styles.saleList}>
-            {ownerSales.map(sale => (
+            {pageOwnerSales.map(sale => (
               <article key={sale.id} className={styles.saleCard}>
                 <div className={styles.ownerAccountInfo}>
                   <strong>{sale.titleSnapshot}</strong>
@@ -2496,9 +2604,11 @@ export default function PanelPage() {
             ))}
           </div>
         )}
+        {renderPagination(salePageKey, ownerSales.length)}
       </div>
     </div>
-  )
+    )
+  }
 
   const renderConfiguracionSection = () => (
     <div className={styles.sectionStack}>
@@ -2864,7 +2974,7 @@ export default function PanelPage() {
                 onChange={event => setAssignSearch(event.target.value)}
               />
               <div className={styles.searchPicker}>
-                {searchableUsers.map(user => (
+                {getPageItems('assign-users', searchableUsers).map(user => (
                   <button
                     key={user.id}
                     type='button'
@@ -2876,6 +2986,7 @@ export default function PanelPage() {
                   </button>
                 ))}
               </div>
+              {renderPagination('assign-users', searchableUsers.length)}
               <div className={styles.formGrid}>
                 <input
                   className={styles.input}
@@ -3006,11 +3117,7 @@ export default function PanelPage() {
                   onChange={event => setProductForm(current => ({ ...current, search: event.target.value }))}
                 />
                 <div className={styles.searchPicker}>
-                  {(panelData?.allUsers || [])
-                    .filter(user =>
-                      user.username.toLowerCase().includes(productForm.search.trim().toLowerCase())
-                    )
-                    .map(user => (
+                  {getPageItems('product-special-users', productSpecialUsers).map(user => (
                       <button
                         key={user.id}
                         type='button'
@@ -3028,6 +3135,7 @@ export default function PanelPage() {
                       </button>
                     ))}
                 </div>
+                {renderPagination('product-special-users', productSpecialUsers.length)}
                 <div className={styles.inlineActions}>
                   <input
                     className={styles.input}
