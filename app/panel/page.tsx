@@ -116,6 +116,7 @@ type PanelApiPayload = {
   product?: PanelProduct
   productId?: string
   saleId?: string
+  user?: Pick<PanelOwnerUser, 'id' | 'username'>
 }
 
 type OwnerAccountFilter = 'todos' | 'vigentes' | 'por_vencer' | 'vencidas'
@@ -469,6 +470,8 @@ export default function PanelPage() {
   const [buyProduct, setBuyProduct] = useState<PanelProduct | null>(null)
   const [assignOpen, setAssignOpen] = useState(false)
   const [productOpen, setProductOpen] = useState(false)
+  const [pendingUserOpen, setPendingUserOpen] = useState(false)
+  const [pendingUsername, setPendingUsername] = useState('')
   const [assignSearch, setAssignSearch] = useState('')
   const [assignUserId, setAssignUserId] = useState('')
   const [assignPickerOpen, setAssignPickerOpen] = useState(false)
@@ -1487,6 +1490,30 @@ export default function PanelPage() {
     }
   }
 
+  const submitPendingUser = async () => {
+    setSaving(true)
+    setError('')
+    try {
+      const payload = await callPanelApi('/api/subcliente', {
+        action: 'create_pending',
+        username: pendingUsername,
+      })
+
+      setPendingUserOpen(false)
+      setPendingUsername('')
+      setNotice(payload.message || 'Usuario pendiente creado.')
+      await refreshPanel(true)
+      if (payload.user?.id && panelRole === 'owner') {
+        setExpandedUserId(payload.user.id)
+        setActiveSection('vip')
+      }
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'No se pudo crear el usuario.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const removeAccount = async (accountId: string) => {
     const snapshot = panelData
     setSaving(true)
@@ -2110,12 +2137,13 @@ export default function PanelPage() {
         <div className={styles.blockHeader}>
           <div>
             <span className={styles.blockEyebrow}>Usuarios</span>
-            <h3>Esta parte va con tu otra logica</h3>
+            <h3>Subclientes</h3>
           </div>
+          <button type='button' className={styles.primaryButton} onClick={() => setPendingUserOpen(true)}>
+            Crear usuario
+          </button>
         </div>
-        <div className={styles.emptyCard}>
-          La dejamos lista para enchufar la logica especial que me vas a pasar luego.
-        </div>
+        <div className={styles.emptyCard}>Crea un usuario pendiente y pasale /subcliente para que termine su registro.</div>
       </div>
     </div>
   )
@@ -2319,6 +2347,9 @@ export default function PanelPage() {
               <span className={styles.blockEyebrow}>Usuarios</span>
               <h3>Clientes y usuarios</h3>
             </div>
+            <button type='button' className={styles.primaryButton} onClick={() => setPendingUserOpen(true)}>
+              Crear usuario
+            </button>
           </div>
 
           <div className={styles.ownerUserRail}>
@@ -3481,6 +3512,49 @@ export default function PanelPage() {
               )}
               <button type='button' className={styles.primaryButton} onClick={() => void submitPurchase()}>
                 Enviar compra
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingUserOpen && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modalCard}>
+            <div className={styles.modalHeader}>
+              <div>
+                <span className={styles.blockEyebrow}>Usuarios</span>
+                <h3>Crear usuario pendiente</h3>
+              </div>
+              <button
+                type='button'
+                className={styles.modalClose}
+                onClick={() => {
+                  setPendingUserOpen(false)
+                  setPendingUsername('')
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className={styles.formStack}>
+              <div className={styles.emptyCard}>
+                Solo crea el nombre. Luego esa persona entra a /subcliente, completa telefono, contrasena y su codigo de 4 digitos.
+              </div>
+              <input
+                className={styles.input}
+                placeholder='Nombre de usuario'
+                value={pendingUsername}
+                onChange={event => setPendingUsername(event.target.value)}
+                autoFocus
+              />
+              <button
+                type='button'
+                className={styles.primaryButton}
+                onClick={() => void submitPendingUser()}
+                disabled={saving}
+              >
+                Crear usuario
               </button>
             </div>
           </div>
