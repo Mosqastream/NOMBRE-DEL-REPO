@@ -31,6 +31,7 @@ const USER_SECTIONS = [
 ] as const
 
 const OWNER_SECTIONS = [
+  { id: 'vip', label: 'Usuarios', icon: 'crown' },
   { id: 'solicitudes', label: 'Solicitudes', icon: 'bell' },
   { id: 'asignacion', label: 'Asignacion', icon: 'spark' },
   { id: 'ventas', label: 'Ventas', icon: 'clock' },
@@ -3275,6 +3276,7 @@ export default function PanelPage() {
 
   const renderCurrentSection = () => {
     if (panelView === 'owner') {
+      if (activeSection === 'vip') return renderOwnerUsersSectionV2()
       if (activeSection === 'solicitudes') return renderSupportSectionV2(true)
       if (activeSection === 'asignacion') return renderAssignSection()
       if (activeSection === 'ventas') return renderVentasSectionV2()

@@ -10,6 +10,7 @@ export type UserSectionId =
   | 'historial'
   | 'configuracion'
 export type OwnerSectionId =
+  | 'vip'
   | 'solicitudes'
   | 'asignacion'
   | 'ventas'
