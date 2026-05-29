@@ -5,6 +5,7 @@ import {
   isSpecialNetflixRecipient,
   normalizeSpecialRecipient,
 } from '@/lib/codes-telegram-special'
+import { invokeDirectTelegramFlow } from '@/lib/codes-telegram-direct'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -19,7 +20,7 @@ const getBridgeConfig = () => {
   const bridgeSecret = normalizeText(process.env.CODES_TELEGRAM_BRIDGE_SECRET)
 
   if (!bridgeUrl) {
-    throw new Error('Falta CODES_TELEGRAM_BRIDGE_URL para el puente local de Telegram.')
+    return null
   }
 
   if (!bridgeSecret) {
@@ -78,7 +79,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const { bridgeSecret, bridgeUrl } = getBridgeConfig()
+    const bridgeConfig = getBridgeConfig()
+
+    if (!bridgeConfig) {
+      const payload = await invokeDirectTelegramFlow({
+        action: action.key,
+        recipient,
+      })
+      return NextResponse.json(payload)
+    }
+
+    const { bridgeSecret, bridgeUrl } = bridgeConfig
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), BRIDGE_TIMEOUT_MS)
 
