@@ -505,6 +505,7 @@ export default function PanelPage() {
   const [childAssignCutoffDate, setChildAssignCutoffDate] = useState('')
   const [childAssignSearch, setChildAssignSearch] = useState('')
   const [childAssignPickerOpen, setChildAssignPickerOpen] = useState(false)
+  const [childAccountPickerOpen, setChildAccountPickerOpen] = useState(false)
   const [assignSearch, setAssignSearch] = useState('')
   const [assignUserId, setAssignUserId] = useState('')
   const [assignPickerOpen, setAssignPickerOpen] = useState(false)
@@ -665,6 +666,11 @@ export default function PanelPage() {
   const ownPanelAccounts = useMemo(
     () => (panelData?.accounts || []).filter(account => account.assignedUserId === profile?.id),
     [panelData?.accounts, profile?.id]
+  )
+
+  const selectedChildAssignAccount = useMemo(
+    () => ownPanelAccounts.find(account => account.id === childAssignAccountId) || null,
+    [childAssignAccountId, ownPanelAccounts]
   )
 
   const assignHasInlineData = assignForm.emailsText.includes('|')
@@ -1597,6 +1603,7 @@ export default function PanelPage() {
       setChildAssignCutoffDate('')
       setChildAssignSearch('')
       setChildAssignPickerOpen(false)
+      setChildAccountPickerOpen(false)
       setNotice(payload.message || 'Cuenta asignada al subcliente.')
       await refreshPanel(true)
     } catch (submitError) {
@@ -3712,6 +3719,7 @@ export default function PanelPage() {
                   setChildAssignCutoffDate('')
                   setChildAssignSearch('')
                   setChildAssignPickerOpen(false)
+                  setChildAccountPickerOpen(false)
                 }}
               >
                 Cerrar
@@ -3789,21 +3797,56 @@ export default function PanelPage() {
                 </div>
               )}
 
-              <label className={styles.fieldLabel}>
+              <div className={styles.fieldLabel}>
                 <span>Cuenta a compartir</span>
-                <select
-                  className={styles.input}
-                  value={childAssignAccountId}
-                  onChange={event => setChildAssignAccountId(event.target.value)}
-                >
-                  <option value=''>Selecciona una cuenta</option>
-                  {ownPanelAccounts.map(account => (
-                    <option key={account.id} value={account.id}>
-                      {account.serviceName} - {account.accountEmail}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <div className={styles.accountPicker}>
+                  <button
+                    type='button'
+                    className={styles.accountPickerButton}
+                    onClick={() => setChildAccountPickerOpen(current => !current)}
+                  >
+                    {selectedChildAssignAccount ? (
+                      <span className={styles.accountPickerSelected}>
+                        <strong>{selectedChildAssignAccount.serviceName}</strong>
+                        <small>{selectedChildAssignAccount.accountEmail}</small>
+                      </span>
+                    ) : (
+                      <span className={styles.accountPickerPlaceholder}>Selecciona una cuenta</span>
+                    )}
+                    <span className={styles.accountPickerChevron}>⌄</span>
+                  </button>
+
+                  {childAccountPickerOpen && (
+                    <div className={styles.accountPickerMenu}>
+                      {ownPanelAccounts.length === 0 ? (
+                        <div className={styles.emptyInline}>No tienes cuentas para compartir.</div>
+                      ) : (
+                        ownPanelAccounts.map(account => (
+                          <button
+                            key={account.id}
+                            type='button'
+                            className={
+                              childAssignAccountId === account.id
+                                ? styles.accountPickerOptionActive
+                                : styles.accountPickerOption
+                            }
+                            onClick={() => {
+                              setChildAssignAccountId(account.id)
+                              setChildAccountPickerOpen(false)
+                            }}
+                          >
+                            <span>
+                              <strong>{account.serviceName}</strong>
+                              <small>{account.accountEmail}</small>
+                            </span>
+                            {renderDaysBadge(account.daysRemaining)}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
 
               <label className={styles.fieldLabel}>
                 <span>Fecha de corte para el subcliente</span>
