@@ -343,34 +343,95 @@
 }
 
 .specialActionGrid {
-  margin-top: 18px;
+  margin-top: 14px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 
 .specialActionButton {
   display: grid;
-  gap: 8px;
-  min-height: 104px;
-  padding: 18px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 126, 126, 0.2);
-  background: linear-gradient(180deg, rgba(36, 18, 20, 0.94), rgba(21, 11, 12, 0.92));
+  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-areas:
+    "icon title"
+    "icon text";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 3px;
+  min-height: 74px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 126, 126, 0.18);
+  background:
+    radial-gradient(circle at 12% 15%, rgba(255, 255, 255, 0.1), transparent 26%),
+    linear-gradient(135deg, rgba(45, 18, 21, 0.96), rgba(18, 10, 12, 0.94));
   color: #f8fbff;
   text-align: left;
   cursor: pointer;
-  transition: transform 0.18s ease, border-color 0.18s ease, filter 0.18s ease;
+  transition: transform 0.18s ease, border-color 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease;
+}
+
+.specialActionButton::before {
+  grid-area: icon;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  font-size: 1.15rem;
+}
+
+.specialActionButton:nth-child(1)::before {
+  content: "🔗";
+}
+
+.specialActionButton:nth-child(2)::before {
+  content: "🏠";
+}
+
+.specialActionButton:nth-child(3)::before {
+  content: "🔑";
+}
+
+.specialActionButton:nth-child(4)::before {
+  content: "📲";
+}
+
+.specialActionButton:nth-child(5)::before {
+  content: "🔐";
+}
+
+.specialActionButton:nth-child(1) {
+  border-color: rgba(255, 105, 105, 0.24);
+}
+
+.specialActionButton:nth-child(2) {
+  border-color: rgba(255, 174, 84, 0.24);
+}
+
+.specialActionButton:nth-child(3) {
+  border-color: rgba(255, 96, 153, 0.22);
+}
+
+.specialActionButton:nth-child(4) {
+  border-color: rgba(82, 180, 255, 0.24);
+}
+
+.specialActionButton:nth-child(5) {
+  border-color: rgba(115, 255, 185, 0.24);
 }
 
 .specialActionButton:hover {
-  transform: translateY(-1px);
-  filter: brightness(1.03);
+  transform: translateY(-2px);
+  filter: brightness(1.08);
+  box-shadow: 0 14px 30px rgba(255, 31, 45, 0.12);
 }
 
 .specialActionButton[data-active='true'] {
-  border-color: rgba(225, 50, 58, 0.58);
-  box-shadow: 0 0 0 1px rgba(225, 50, 58, 0.18), 0 18px 30px rgba(5, 10, 30, 0.18);
+  border-color: rgba(255, 45, 58, 0.72);
+  box-shadow: 0 0 0 1px rgba(255, 45, 58, 0.18), 0 18px 34px rgba(229, 9, 20, 0.16);
 }
 
 .specialActionButton:disabled {
@@ -380,15 +441,17 @@
 }
 
 .specialActionButton strong {
-  font-size: 1.05rem;
+  grid-area: title;
+  font-size: 0.96rem;
   font-weight: 900;
   line-height: 1.2;
 }
 
 .specialActionButton span {
-  color: #d4c4c7;
-  font-size: 0.92rem;
-  line-height: 1.5;
+  grid-area: text;
+  color: #d9c6c9;
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .errorMessage {
@@ -673,7 +736,7 @@
   }
 
   .specialActionGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .specialResultTop {
@@ -686,6 +749,28 @@
   .copyButton,
   .specialActionButton {
     width: 100%;
+  }
+
+  .specialActionButton {
+    grid-template-columns: 32px minmax(0, 1fr);
+    min-height: 62px;
+    padding: 10px;
+    border-radius: 15px;
+  }
+
+  .specialActionButton::before {
+    width: 32px;
+    height: 32px;
+    border-radius: 12px;
+    font-size: 1rem;
+  }
+
+  .specialActionButton strong {
+    font-size: 0.82rem;
+  }
+
+  .specialActionButton span {
+    display: none;
   }
 }
 
