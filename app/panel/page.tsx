@@ -118,6 +118,7 @@ type PanelApiPayload = {
 }
 
 type OwnerAccountFilter = 'todos' | 'vigentes' | 'por_vencer' | 'vencidas'
+type UserAccountFilter = OwnerAccountFilter | 'soporte'
 
 const defaultIssueForm: SupportIssueForm = {
   subject: '',
@@ -232,6 +233,28 @@ function removeAccountFromPayload(
         accounts: nextAccounts,
       }
     }),
+  })
+}
+
+function replaceAccountEmailInPayload(
+  payload: PanelBootstrapPayload,
+  accountId: string,
+  accountEmail: string
+): PanelBootstrapPayload {
+  return normalizePanelPayload({
+    ...payload,
+    accounts: (payload.accounts || []).map(account =>
+      account.id === accountId ? { ...account, accountEmail, updatedAt: new Date().toISOString() } : account
+    ),
+    supportRequests: (payload.supportRequests || []).map(request =>
+      request.accountId === accountId ? { ...request, accountEmail, updatedAt: new Date().toISOString() } : request
+    ),
+    allUsers: (payload.allUsers || []).map(user => ({
+      ...user,
+      accounts: (user.accounts || []).map(account =>
+        account.id === accountId ? { ...account, accountEmail, updatedAt: new Date().toISOString() } : account
+      ),
+    })),
   })
 }
 
@@ -437,9 +460,11 @@ export default function PanelPage() {
   const [expandedUserId, setExpandedUserId] = useState<string | null>('all')
   const [ownerUserSearch, setOwnerUserSearch] = useState('')
   const [ownerAccountFilter, setOwnerAccountFilter] = useState<OwnerAccountFilter>('todos')
+  const [userAccountFilter, setUserAccountFilter] = useState<UserAccountFilter>('todos')
   const [supportChoiceAccount, setSupportChoiceAccount] = useState<PanelAccount | null>(null)
   const [issueAccount, setIssueAccount] = useState<PanelAccount | null>(null)
   const [renewalAccount, setRenewalAccount] = useState<PanelAccount | null>(null)
+  const [replacementEmail, setReplacementEmail] = useState('')
   const [buyProduct, setBuyProduct] = useState<PanelProduct | null>(null)
   const [assignOpen, setAssignOpen] = useState(false)
   const [productOpen, setProductOpen] = useState(false)
@@ -457,6 +482,7 @@ export default function PanelPage() {
   const [telegramForm, setTelegramForm] = useState<TelegramForm>(defaultTelegramForm)
   const [telegramLoading, setTelegramLoading] = useState(false)
   const [pageByKey, setPageByKey] = useState<Record<string, number>>({})
+  const [seenSupportMap, setSeenSupportMap] = useState<Record<string, string>>({})
   const realtimeRefreshRef = useRef<number | null>(null)
   const realtimePollRef = useRef<number | null>(null)
   const refreshInFlightRef = useRef(false)
@@ -516,6 +542,29 @@ export default function PanelPage() {
 
   const selectedRequest =
     currentRequests.find(item => item.id === selectedRequestId) || currentRequests[0] || null
+
+  const getSupportSeenMarker = (request: PanelSupportRequest) => {
+    const lastMessage = request.messages?.[request.messages.length - 1] || null
+    return lastMessage?.createdAt || `${request.status}:${request.updatedAt}`
+  }
+
+  const requestNeedsAttention = (request: PanelSupportRequest) => {
+    const marker = getSupportSeenMarker(request)
+    if (seenSupportMap[request.id] === marker) return false
+    if (request.status === 'cierre_solicitado' && request.requesterId === profile?.id) return true
+    const lastMessage = request.messages?.[request.messages.length - 1] || null
+    return Boolean(lastMessage && lastMessage.senderId !== profile?.id)
+  }
+
+  const userSupportAttentionCount = useMemo(
+    () => userSupportRequests.filter(request => requestNeedsAttention(request)).length,
+    [profile?.id, seenSupportMap, userSupportRequests]
+  )
+
+  const userSupportAccountIds = useMemo(
+    () => new Set(userSupportRequests.map(request => request.accountId).filter(Boolean) as string[]),
+    [userSupportRequests]
+  )
 
   const ownerProducts = useMemo(
     () =>
@@ -669,6 +718,27 @@ export default function PanelPage() {
   }, [panelRole])
 
   useEffect(() => {
+    if (!profile?.id) return
+
+    try {
+      const raw = window.localStorage.getItem(`panel-support-seen-${profile.id}`)
+      setSeenSupportMap(raw ? JSON.parse(raw) : {})
+    } catch {
+      setSeenSupportMap({})
+    }
+  }, [profile?.id])
+
+  useEffect(() => {
+    if (!profile?.id) return
+
+    try {
+      window.localStorage.setItem(`panel-support-seen-${profile.id}`, JSON.stringify(seenSupportMap))
+    } catch {
+      // Local storage can be blocked; notifications still work for the current render.
+    }
+  }, [profile?.id, seenSupportMap])
+
+  useEffect(() => {
     if (panelView === 'owner') {
       if (!OWNER_SECTIONS.some(section => section.id === activeSection)) {
         setActiveSection('solicitudes')
@@ -688,6 +758,20 @@ export default function PanelPage() {
       setSelectedRequestId(currentRequests[0].id)
     }
   }, [currentRequests, selectedRequestId])
+
+  useEffect(() => {
+    if (!selectedRequest) return
+    if (activeSection !== 'soporte' && activeSection !== 'solicitudes') return
+
+    const marker = getSupportSeenMarker(selectedRequest)
+    setSeenSupportMap(current =>
+      current[selectedRequest.id] === marker ? current : { ...current, [selectedRequest.id]: marker }
+    )
+  }, [activeSection, selectedRequest?.id, selectedRequest?.status, selectedRequest?.updatedAt, selectedRequest?.messages])
+
+  useEffect(() => {
+    setReplacementEmail(selectedRequest?.accountEmail || '')
+  }, [selectedRequest?.id, selectedRequest?.accountEmail])
 
   useEffect(() => {
     if (profile?.username) {
@@ -1201,6 +1285,39 @@ export default function PanelPage() {
     }
   }
 
+  const replaceSupportAccountEmail = async (request: PanelSupportRequest) => {
+    const nextEmail = replacementEmail.trim().toLowerCase()
+    if (!request.accountId) {
+      setError('Esta solicitud no tiene una cuenta vinculada para reemplazar.')
+      return
+    }
+
+    if (!nextEmail) {
+      setError('Ingresa el correo nuevo para reemplazar la cuenta.')
+      return
+    }
+
+    setSaving(true)
+    setError('')
+    try {
+      setPanelData(current =>
+        current ? replaceAccountEmailInPayload(current, request.accountId || '', nextEmail) : current
+      )
+      const payload = await callPanelApi('/api/panel/requests', {
+        action: 'replace_account_email',
+        requestId: request.id,
+        accountEmail: nextEmail,
+      })
+      setNotice(payload.message || 'Correo reemplazado exitosamente.')
+      void refreshPanel(true)
+    } catch (submitError) {
+      void refreshPanel(true)
+      setError(submitError instanceof Error ? submitError.message : 'No se pudo reemplazar el correo.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const submitPurchase = async () => {
     if (!buyProduct) return
     setSaving(true)
@@ -1556,7 +1673,7 @@ export default function PanelPage() {
           section.id === 'solicitudes'
             ? ownerSupportRequests.length
             : section.id === 'soporte'
-              ? userSupportRequests.length
+              ? userSupportAttentionCount || userSupportRequests.length
               : null
 
         return (
@@ -1706,8 +1823,41 @@ export default function PanelPage() {
 
   const renderAccountsSection = () => {
     const accounts = panelData?.accounts || []
-    const pageKey = 'user-accounts'
-    const pageAccounts = getPageItems(pageKey, accounts)
+    const accountCounts = {
+      todos: accounts.length,
+      vigentes: accounts.filter(account => {
+        const days = getSafeDaysRemaining(account.daysRemaining)
+        return days !== null && days > 7
+      }).length,
+      por_vencer: accounts.filter(account => {
+        const days = getSafeDaysRemaining(account.daysRemaining)
+        return days !== null && days > 0 && days <= 7
+      }).length,
+      vencidas: accounts.filter(account => {
+        const days = getSafeDaysRemaining(account.daysRemaining)
+        return days !== null && days <= 0
+      }).length,
+      soporte: accounts.filter(account => userSupportAccountIds.has(account.id)).length,
+    }
+    const filteredAccounts = accounts.filter(account => {
+      const days = getSafeDaysRemaining(account.daysRemaining)
+
+      if (userAccountFilter === 'vigentes') return days !== null && days > 7
+      if (userAccountFilter === 'por_vencer') return days !== null && days > 0 && days <= 7
+      if (userAccountFilter === 'vencidas') return days !== null && days <= 0
+      if (userAccountFilter === 'soporte') return userSupportAccountIds.has(account.id)
+
+      return true
+    })
+    const pageKey = `user-accounts-${userAccountFilter}`
+    const pageAccounts = getPageItems(pageKey, filteredAccounts)
+    const filterOptions: Array<{ id: UserAccountFilter; label: string; count: number }> = [
+      { id: 'todos', label: 'Todos', count: accountCounts.todos },
+      { id: 'vigentes', label: 'Vigentes', count: accountCounts.vigentes },
+      { id: 'por_vencer', label: 'Por vencer', count: accountCounts.por_vencer },
+      { id: 'vencidas', label: 'Vencidas', count: accountCounts.vencidas },
+      { id: 'soporte', label: 'En soporte', count: accountCounts.soporte },
+    ]
 
     return (
       <div className={styles.sectionStack}>
@@ -1719,8 +1869,24 @@ export default function PanelPage() {
             </div>
           </div>
 
+          <div className={styles.inlineTabs}>
+            {filterOptions.map(option => (
+              <button
+                key={option.id}
+                type='button'
+                className={userAccountFilter === option.id ? styles.tabActive : styles.tabButton}
+                onClick={() => setUserAccountFilter(option.id)}
+              >
+                {option.label}
+                <span className={styles.tabCount}>{option.count}</span>
+              </button>
+            ))}
+          </div>
+
           {accounts.length === 0 ? (
             <div className={styles.emptyCard}>Todavia no tienes cuentas asignadas.</div>
+          ) : filteredAccounts.length === 0 ? (
+            <div className={styles.emptyCard}>No hay cuentas en este filtro.</div>
           ) : (
             <>
               <div className={styles.tableWrap}>
@@ -1805,7 +1971,7 @@ export default function PanelPage() {
                 ))}
               </div>
 
-              {renderPagination(pageKey, accounts.length)}
+              {renderPagination(pageKey, filteredAccounts.length)}
             </>
           )}
         </div>
@@ -2500,6 +2666,7 @@ export default function PanelPage() {
   const renderSupportSectionV2 = (ownerMode: boolean) => {
     const pageKey = ownerMode ? 'owner-requests' : 'user-requests'
     const pageRequests = getPageItems(pageKey, currentRequests)
+    const requestPage = getCurrentPage(pageKey, currentRequests.length)
 
     return (
     <div className={styles.sectionSplit}>
@@ -2507,7 +2674,7 @@ export default function PanelPage() {
         <div className={styles.blockHeader}>
           <div>
             <span className={styles.blockEyebrow}>{ownerMode ? 'Solicitudes' : 'Soporte'}</span>
-            <h3>{ownerMode ? 'Chats y renovaciones' : 'Tus solicitudes activas'}</h3>
+            <h3>{ownerMode ? `Chats y renovaciones (${currentRequests.length})` : 'Tus solicitudes activas'}</h3>
           </div>
         </div>
 
@@ -2515,13 +2682,14 @@ export default function PanelPage() {
           <div className={styles.emptyCard}>Todavia no hay solicitudes en esta vista.</div>
         ) : (
           <div className={styles.requestList}>
-            {pageRequests.map(request => (
+            {pageRequests.map((request, index) => (
               <button
                 key={request.id}
                 type='button'
                 className={request.id === selectedRequest?.id ? styles.requestItemActive : styles.requestItem}
                 onClick={() => setSelectedRequestId(request.id)}
               >
+                <span className={styles.requestNumber}>{(requestPage - 1) * PAGE_SIZE + index + 1}</span>
                 <div className={styles.requestCardBody}>
                   <strong>{request.subject}</strong>
                   <span>{request.serviceName || 'Sin cuenta'}</span>
@@ -2576,6 +2744,31 @@ export default function PanelPage() {
                 src={selectedRequest.paymentProofDataUrl}
                 alt='Comprobante enviado'
               />
+            )}
+
+            {ownerMode && selectedRequest.requestKind === 'no_payment' && selectedRequest.accountId && (
+              <div className={styles.replaceCard}>
+                <div>
+                  <span className={styles.blockEyebrow}>Reemplazar correo</span>
+                  <strong>Actualiza esta cuenta y avisa al cliente</strong>
+                </div>
+                <div className={styles.replaceActions}>
+                  <input
+                    className={styles.input}
+                    placeholder='Nuevo correo de la cuenta'
+                    value={replacementEmail}
+                    onChange={event => setReplacementEmail(event.target.value)}
+                  />
+                  <button
+                    type='button'
+                    className={styles.primaryButton}
+                    onClick={() => void replaceSupportAccountEmail(selectedRequest)}
+                    disabled={saving}
+                  >
+                    Reemplazar
+                  </button>
+                </div>
+              </div>
             )}
 
             <div className={styles.chatHeader}>

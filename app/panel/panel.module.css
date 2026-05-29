@@ -555,7 +555,7 @@
 .requestItem,
 .requestItemActive {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start;
   gap: 16px;
   padding: 18px;
@@ -567,6 +567,18 @@
 .requestItemActive {
   border-color: rgba(255, 82, 82, 0.34);
   background: linear-gradient(135deg, rgba(255, 22, 34, 0.18), rgba(111, 13, 18, 0.14));
+}
+
+.requestNumber {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(255, 31, 45, 0.14);
+  color: #ffadb4;
+  font-weight: 950;
 }
 
 .requestCardBody {
@@ -984,6 +996,25 @@
   padding-inline: 14px;
 }
 
+.tabCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  margin-left: 8px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 950;
+}
+
+.tabActive .tabCount {
+  background: rgba(255, 255, 255, 0.22);
+}
+
 .modalOverlay {
   position: fixed;
   inset: 0;
@@ -1248,6 +1279,28 @@
   padding: 0 4px;
 }
 
+.replaceCard {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 65, 75, 0.18);
+  background:
+    radial-gradient(circle at 94% 10%, rgba(255, 48, 58, 0.18), transparent 26%),
+    rgba(255, 255, 255, 0.03);
+}
+
+.replaceCard strong {
+  display: block;
+  margin-top: 6px;
+}
+
+.replaceActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
 .mobileUtilityRow {
   display: flex;
   align-items: center;
@@ -1388,6 +1441,10 @@
   .settingsGrid {
     grid-template-columns: 1fr;
   }
+
+  .replaceActions {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 1100px) {
@@ -1451,6 +1508,11 @@
     grid-template-columns: 1fr auto;
     align-items: center;
     justify-items: stretch;
+  }
+
+  .requestNumber {
+    width: fit-content;
+    padding: 0 10px;
   }
 
   .requestDate {

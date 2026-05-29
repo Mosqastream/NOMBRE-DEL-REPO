@@ -83,6 +83,7 @@ export async function POST(request: NextRequest) {
       body?: string
       imageDataUrl?: string
       status?: string
+      accountEmail?: string
     }
 
     const action = String(body.action || '').trim()
@@ -203,6 +204,68 @@ export async function POST(request: NextRequest) {
       }
 
       return NextResponse.json({ message: 'Cierre enviado para confirmacion del cliente.' })
+    }
+
+    if (action === 'replace_account_email') {
+      if (session.profile.role !== 'owner' || currentRequest.owner_id !== session.profile.id) {
+        throw new PanelApiError('Solo el owner puede reemplazar esta cuenta.', 403)
+      }
+
+      if (currentRequest.request_kind !== 'no_payment') {
+        throw new PanelApiError('Solo las solicitudes sin pago permiten reemplazar correo.', 400)
+      }
+
+      if (!currentRequest.account_id) {
+        throw new PanelApiError('Esta solicitud no tiene una cuenta vinculada.', 400)
+      }
+
+      const accountEmail = String(body.accountEmail || '').trim().toLowerCase()
+      if (!accountEmail || !accountEmail.includes('@')) {
+        throw new PanelApiError('Ingresa un correo valido para reemplazar.', 400)
+      }
+
+      const updateAccountResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .update({
+          account_email: accountEmail,
+          updated_at: new Date().toISOString(),
+        } as never)
+        .eq('id', currentRequest.account_id)
+        .eq('owner_id', session.profile.id)
+        .select('id')
+        .maybeSingle()
+
+      if (updateAccountResp.error) {
+        throw new PanelApiError(updateAccountResp.error.message, 500)
+      }
+
+      if (!updateAccountResp.data) {
+        throw new PanelApiError('No se encontro la cuenta para reemplazar.', 404)
+      }
+
+      const messageResp = await session.supabaseAdmin.from('support_messages').insert({
+        request_id: requestId,
+        sender_id: session.profile.id,
+        sender_role: session.profile.role,
+        body: `Correo reemplazado exitosamente: ${accountEmail}`,
+      } as never)
+
+      if (messageResp.error) {
+        throw new PanelApiError(messageResp.error.message, 500)
+      }
+
+      const updateRequestResp = await session.supabaseAdmin
+        .from('support_requests')
+        .update({
+          status: 'en_chat',
+        } as never)
+        .eq('id', requestId)
+
+      if (updateRequestResp.error) {
+        throw new PanelApiError(updateRequestResp.error.message, 500)
+      }
+
+      return NextResponse.json({ message: 'Correo reemplazado y cliente notificado.' })
     }
 
     if (action === 'confirm_close') {
