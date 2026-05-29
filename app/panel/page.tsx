@@ -2337,12 +2337,8 @@ export default function PanelPage() {
               >
                 <div className={styles.ownerUserMain}>
                   <strong>Todos</strong>
-                  <span>Todas tus cuentas asignadas</span>
                 </div>
-                <div className={styles.ownerUserMeta}>
-                  <span className={styles.badgeMuted}>General</span>
-                  <strong className={styles.ownerUserCount}>{ownerAllAccounts.length}</strong>
-                </div>
+                <strong className={styles.ownerUserCount}>({ownerAllAccounts.length})</strong>
               </button>
 
               {ownerUsers.length === 0 ? (
@@ -2359,12 +2355,8 @@ export default function PanelPage() {
                   >
                     <div className={styles.ownerUserMain}>
                       <strong>{user.username}</strong>
-                      <span>Registro: {formatDate(user.createdAt)}</span>
                     </div>
-                    <div className={styles.ownerUserMeta}>
-                      {renderStatusBadge(user.role)}
-                      <strong className={styles.ownerUserCount}>{user.accounts.length}</strong>
-                    </div>
+                    <strong className={styles.ownerUserCount}>({user.accounts.length})</strong>
                   </button>
                 ))
               )}
@@ -2709,7 +2701,7 @@ export default function PanelPage() {
               />
             )}
 
-            {ownerMode && selectedRequest.requestKind === 'no_payment' && selectedRequest.accountId && (
+            {ownerMode && selectedRequest.accountId && (
               <div className={styles.replaceCard}>
                 <div>
                   <span className={styles.blockEyebrow}>Reemplazar correo</span>
@@ -3510,30 +3502,59 @@ export default function PanelPage() {
 
             <div className={styles.formStack}>
               <div className={styles.assignLookup}>
-                <input
-                  className={styles.input}
-                  placeholder={
-                    assignHasInlineUsers
-                      ? 'Usuario por linea activado en asignacion masiva'
-                      : 'Buscar usuario por nombre'
-                  }
-                  value={assignSearch}
-                  disabled={assignHasInlineUsers}
-                  onFocus={() => {
-                    if (!assignHasInlineUsers) setAssignPickerOpen(true)
-                  }}
-                  onChange={event => {
-                    setAssignSearch(event.target.value)
-                    setAssignPickerOpen(true)
-                  }}
-                />
                 {selectedAssignUser && !assignHasInlineUsers && (
                   <div className={styles.selectedUserCard}>
-                    <strong>{selectedAssignUser.username}</strong>
-                    <span>{selectedAssignUser.activeAccounts} cuentas activas</span>
+                    <div>
+                      <span className={styles.blockEyebrow}>Usuario seleccionado</span>
+                      <strong>{selectedAssignUser.username}</strong>
+                      <small>{selectedAssignUser.activeAccounts} cuentas activas</small>
+                    </div>
+                    <button
+                      type='button'
+                      className={styles.ghostButton}
+                      onClick={() => {
+                        setAssignUserId('')
+                        setAssignSearch('')
+                        setAssignPickerOpen(false)
+                      }}
+                    >
+                      Cambiar
+                    </button>
                   </div>
                 )}
-                {assignPickerOpen && !assignHasInlineUsers && (
+                {(!selectedAssignUser || assignHasInlineUsers) && (
+                  <div className={styles.assignSearchRow}>
+                    <input
+                      className={styles.input}
+                      placeholder={
+                        assignHasInlineUsers
+                          ? 'Usuario por linea activado en asignacion masiva'
+                          : 'Buscar usuario por nombre'
+                      }
+                      value={assignSearch}
+                      disabled={assignHasInlineUsers}
+                      onChange={event => {
+                        setAssignSearch(event.target.value)
+                        setAssignPickerOpen(false)
+                      }}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' && !assignHasInlineUsers) {
+                          event.preventDefault()
+                          setAssignPickerOpen(true)
+                        }
+                      }}
+                    />
+                    <button
+                      type='button'
+                      className={styles.secondaryButton}
+                      disabled={assignHasInlineUsers}
+                      onClick={() => setAssignPickerOpen(true)}
+                    >
+                      Buscar
+                    </button>
+                  </div>
+                )}
+                {assignPickerOpen && !assignHasInlineUsers && !selectedAssignUser && (
                   <div className={styles.searchPicker}>
                     {searchableUsers.length === 0 ? (
                       <div className={styles.emptyInline}>No hay usuarios con ese nombre.</div>

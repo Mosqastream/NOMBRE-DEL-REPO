@@ -1068,6 +1068,12 @@
   gap: 10px;
 }
 
+.assignSearchRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
 .selectedUserCard,
 .assignHint,
 .emptyInline {
@@ -1082,11 +1088,24 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 14px;
+  background:
+    radial-gradient(circle at 92% 12%, rgba(255, 57, 68, 0.16), transparent 28%),
+    rgba(255, 255, 255, 0.035);
 }
 
 .selectedUserCard strong {
+  display: block;
+  margin-top: 5px;
   color: #fff;
+  font-size: 1.08rem;
+}
+
+.selectedUserCard small {
+  display: block;
+  margin-top: 5px;
+  color: rgba(255, 255, 255, 0.66);
+  font-weight: 800;
 }
 
 .assignHint,
@@ -1180,9 +1199,10 @@
 .ownerUserOptionActive {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
+  gap: 10px;
   align-items: center;
-  padding: 14px 16px;
+  min-height: 50px;
+  padding: 12px 14px;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.025);
@@ -1205,11 +1225,12 @@
 
 .ownerUserMain {
   display: grid;
-  gap: 5px;
+  gap: 2px;
 }
 
 .ownerUserMain strong {
   font-size: 1rem;
+  line-height: 1.05;
 }
 
 .ownerUserMain span {
@@ -1223,7 +1244,8 @@
 }
 
 .ownerUserCount {
-  font-size: 1.12rem;
+  color: #fff;
+  font-size: 1rem;
   line-height: 1;
 }
 
@@ -1435,6 +1457,10 @@
   }
 
   .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .assignSearchRow {
     grid-template-columns: 1fr;
   }
 

@@ -211,10 +211,6 @@ export async function POST(request: NextRequest) {
         throw new PanelApiError('Solo el owner puede reemplazar esta cuenta.', 403)
       }
 
-      if (currentRequest.request_kind !== 'no_payment') {
-        throw new PanelApiError('Solo las solicitudes sin pago permiten reemplazar correo.', 400)
-      }
-
       if (!currentRequest.account_id) {
         throw new PanelApiError('Esta solicitud no tiene una cuenta vinculada.', 400)
       }
