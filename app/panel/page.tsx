@@ -31,12 +31,13 @@ const USER_SECTIONS = [
 ] as const
 
 const OWNER_SECTIONS = [
-  { id: 'vip', label: 'Usuarios', icon: 'crown' },
   { id: 'solicitudes', label: 'Solicitudes', icon: 'bell' },
   { id: 'asignacion', label: 'Asignacion', icon: 'spark' },
   { id: 'ventas', label: 'Ventas', icon: 'clock' },
   { id: 'telegram', label: 'Telegram', icon: 'send' },
+  { id: 'codigos', label: 'Codigos', icon: 'shield' },
   { id: 'historial', label: 'Historial', icon: 'clock' },
+  { id: 'configuracion', label: 'Configuracion', icon: 'settings' },
 ] as const
 
 const PAGE_SIZE = 8
@@ -44,6 +45,7 @@ const PAGE_SIZE = 8
 type SectionIconName =
   | (typeof USER_SECTIONS)[number]['icon']
   | (typeof OWNER_SECTIONS)[number]['icon']
+  | 'crown'
 
 type SupportIssueForm = {
   subject: string
@@ -443,6 +445,7 @@ export default function PanelPage() {
   const [productOpen, setProductOpen] = useState(false)
   const [assignSearch, setAssignSearch] = useState('')
   const [assignUserId, setAssignUserId] = useState('')
+  const [assignPickerOpen, setAssignPickerOpen] = useState(false)
   const [issueForm, setIssueForm] = useState<SupportIssueForm>(defaultIssueForm)
   const [messageForm, setMessageForm] = useState<SupportMessageForm>(defaultMessageForm)
   const [renewalProofDataUrl, setRenewalProofDataUrl] = useState<string | null>(null)
@@ -550,6 +553,31 @@ export default function PanelPage() {
     return rawUsers.filter(item => item.username.toLowerCase().includes(term))
   }, [panelData?.allUsers, productForm.search])
 
+  const selectedAssignUser = useMemo(
+    () => (panelData?.allUsers || []).find(user => user.id === assignUserId) || null,
+    [assignUserId, panelData?.allUsers]
+  )
+
+  const assignHasInlineData = assignForm.emailsText.includes('|')
+  const assignHasInlineUsers = assignForm.emailsText
+    .split(/\r?\n/)
+    .some(line => line.split('|').length >= 3)
+
+  const bulkUserSuggestionTerm = useMemo(() => {
+    const lines = assignForm.emailsText.split(/\r?\n/)
+    const lastLineWithUser = [...lines].reverse().find(line => line.split('|').length >= 3)
+    if (!lastLineWithUser) return ''
+    const parts = lastLineWithUser.split('|')
+    return String(parts[2] || '').trim().toLowerCase()
+  }, [assignForm.emailsText])
+
+  const bulkUserSuggestions = useMemo(() => {
+    if (!bulkUserSuggestionTerm) return []
+    return (panelData?.allUsers || [])
+      .filter(user => user.username.toLowerCase().includes(bulkUserSuggestionTerm))
+      .slice(0, 5)
+  }, [bulkUserSuggestionTerm, panelData?.allUsers])
+
   const ownerUsers = useMemo(() => {
     const rawUsers = panelData?.allUsers || []
     const term = ownerUserSearch.trim().toLowerCase()
@@ -643,7 +671,7 @@ export default function PanelPage() {
   useEffect(() => {
     if (panelView === 'owner') {
       if (!OWNER_SECTIONS.some(section => section.id === activeSection)) {
-        setActiveSection('vip')
+        setActiveSection('solicitudes')
       }
     } else if (!USER_SECTIONS.some(section => section.id === activeSection)) {
       setActiveSection('cuentas')
@@ -1194,30 +1222,118 @@ export default function PanelPage() {
     }
   }
 
+  const parseAssignDate = (value: string) => {
+    const raw = value.trim()
+    if (!raw) return ''
+
+    const slashMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+    if (slashMatch) {
+      const day = slashMatch[1].padStart(2, '0')
+      const month = slashMatch[2].padStart(2, '0')
+      const year = slashMatch[3]
+      const date = new Date(`${year}-${month}-${day}T00:00:00`)
+      if (
+        Number.isNaN(date.getTime()) ||
+        date.getUTCFullYear() !== Number(year) ||
+        date.getUTCMonth() + 1 !== Number(month) ||
+        date.getUTCDate() !== Number(day)
+      ) {
+        throw new Error(`Fecha invalida: ${raw}`)
+      }
+      return `${year}-${month}-${day}`
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+    throw new Error(`Usa fecha dd/mm/aaaa o aaaa-mm-dd: ${raw}`)
+  }
+
+  const resolveAssignUserId = (username: string) => {
+    const normalized = username.trim().toLowerCase()
+    const match = (panelData?.allUsers || []).find(user => user.username.toLowerCase() === normalized)
+    if (!match) {
+      throw new Error(`No encontre el usuario "${username}" en profiles.`)
+    }
+    return match.id
+  }
+
+  const applyBulkUserSuggestion = (username: string) => {
+    setAssignForm(current => {
+      const lines = current.emailsText.split(/\r?\n/)
+      const targetIndex = [...lines].map((line, index) => ({ line, index })).reverse().find(
+        item => item.line.split('|').length >= 3
+      )?.index
+
+      if (targetIndex === undefined) return current
+
+      const parts = lines[targetIndex].split('|')
+      parts[2] = username
+      lines[targetIndex] = parts.join('|')
+      return {
+        ...current,
+        emailsText: lines.join('\n'),
+      }
+    })
+  }
+
   const submitAssign = async () => {
     setSaving(true)
     setError('')
     try {
-      if (!assignUserId) {
-        throw new Error('Selecciona un usuario para asignarle la cuenta.')
-      }
-
-      const emails = assignForm.emailsText
-        .split(/[\n,]+/)
-        .map(item => item.trim().toLowerCase())
+      const rawLines = assignForm.emailsText
+        .split(/\r?\n/)
+        .map(item => item.trim())
         .filter(Boolean)
+      const usesInlineData = rawLines.some(line => line.includes('|'))
+      const assignments = rawLines.flatMap(line => {
+        if (!line.includes('|')) {
+          if (!assignUserId) {
+            throw new Error('Selecciona un usuario para asignarle la cuenta.')
+          }
 
-      if (emails.length === 0) {
+          return line
+            .split(',')
+            .map(email => email.trim().toLowerCase())
+            .filter(Boolean)
+            .map(email => ({
+              email,
+              userId: assignUserId,
+              cutoffDate: assignForm.cutoffDate || null,
+            }))
+        }
+
+        const parts = line.split('|').map(item => item.trim())
+        const emailsPart = parts[0] || ''
+        const cutoffDate = parseAssignDate(parts[1] || '')
+        const inlineUsername = parts[2] || ''
+        const targetUserId = inlineUsername ? resolveAssignUserId(inlineUsername) : assignUserId
+
+        if (!targetUserId) {
+          throw new Error('Cuando uses | sin usuario por linea, selecciona un usuario arriba.')
+        }
+
+        return emailsPart
+          .split(',')
+          .map(email => email.trim().toLowerCase())
+          .filter(Boolean)
+          .map(email => ({
+            email,
+            userId: targetUserId,
+            cutoffDate,
+          }))
+      })
+
+      if (assignments.length === 0) {
         throw new Error('Agrega al menos un correo para asignar.')
       }
 
       const payload = await callPanelApi('/api/panel/accounts', {
         action: 'assign',
-        userId: assignUserId,
-        emails,
+        userId: usesInlineData ? undefined : assignUserId,
+        emails: usesInlineData ? undefined : assignments.map(item => item.email),
+        assignments: usesInlineData ? assignments : undefined,
         serviceName: assignForm.serviceName,
         accountType: assignForm.accountType,
-        cutoffDate: assignForm.cutoffDate,
+        cutoffDate: usesInlineData ? undefined : assignForm.cutoffDate,
         renewalPrice: Number(assignForm.renewalPrice || 0),
         renewalPeriodDays: Number(assignForm.renewalPeriodDays || 30),
         status: 'activa',
@@ -1225,14 +1341,15 @@ export default function PanelPage() {
 
       if (payload.accounts?.length) {
         setPanelData(current => (current ? appendAccountsToPayload(current, payload.accounts || []) : current))
-        setExpandedUserId(assignUserId)
+        setExpandedUserId(assignments[0]?.userId || assignUserId || 'all')
       }
 
       setAssignOpen(false)
       setAssignForm(defaultAssignForm)
       setAssignSearch('')
       setAssignUserId('')
-      setActiveSection('vip')
+      setAssignPickerOpen(false)
+      setActiveSection('asignacion')
       setNotice(payload.message || 'Cuenta asignada.')
       await refreshPanel(true)
     } catch (submitError) {
@@ -1424,7 +1541,7 @@ export default function PanelPage() {
           className={panelView === 'owner' ? styles.viewButtonActive : styles.viewButton}
           onClick={() => {
             setPanelView('owner')
-            setActiveSection('vip')
+            setActiveSection('solicitudes')
           }}
         >
           Owner
@@ -1434,21 +1551,31 @@ export default function PanelPage() {
 
   const renderSectionButtons = (navClassName: string) => (
     <nav className={navClassName} aria-label='Apartados del panel'>
-      {visibleSections.map(section => (
-        <button
-          key={section.id}
-          type='button'
-          className={section.id === activeSection ? styles.navItemActive : styles.navItem}
-          onClick={() => setActiveSection(section.id)}
-        >
-          <span className={styles.navIcon}>
-            <SectionIcon icon={section.icon} />
-          </span>
-          <span className={styles.navBody}>
-            <strong>{section.label}</strong>
-          </span>
-        </button>
-      ))}
+      {visibleSections.map(section => {
+        const count =
+          section.id === 'solicitudes'
+            ? ownerSupportRequests.length
+            : section.id === 'soporte'
+              ? userSupportRequests.length
+              : null
+
+        return (
+          <button
+            key={section.id}
+            type='button'
+            className={section.id === activeSection ? styles.navItemActive : styles.navItem}
+            onClick={() => setActiveSection(section.id)}
+          >
+            <span className={styles.navIcon}>
+              <SectionIcon icon={section.icon} />
+            </span>
+            <span className={styles.navBody}>
+              <strong>{section.label}</strong>
+            </span>
+            {count !== null && <span className={styles.navCount}>{count}</span>}
+          </button>
+        )
+      })}
     </nav>
   )
 
@@ -1464,7 +1591,7 @@ export default function PanelPage() {
             return
           }
           setPanelView('owner')
-          setActiveSection('vip')
+          setActiveSection('solicitudes')
         }}
       >
         <span className={styles.mobileOwnerToggleText}>Owner</span>
@@ -2993,13 +3120,14 @@ export default function PanelPage() {
 
   const renderCurrentSection = () => {
     if (panelView === 'owner') {
-      if (activeSection === 'vip') return renderOwnerUsersSectionV2()
       if (activeSection === 'solicitudes') return renderSupportSectionV2(true)
       if (activeSection === 'asignacion') return renderAssignSection()
       if (activeSection === 'ventas') return renderVentasSectionV2()
       if (activeSection === 'telegram') return renderTelegramSection()
+      if (activeSection === 'codigos') return renderCodigosSection()
       if (activeSection === 'historial') return renderHistorialSection(true)
-      return renderOwnerUsersSectionV2()
+      if (activeSection === 'configuracion') return renderConfiguracionSection()
+      return renderSupportSectionV2(true)
     }
 
     if (activeSection === 'cuentas') return renderAccountsSection()
@@ -3226,26 +3354,54 @@ export default function PanelPage() {
             </div>
 
             <div className={styles.formStack}>
-              <input
-                className={styles.input}
-                placeholder='Buscar usuario por nombre'
-                value={assignSearch}
-                onChange={event => setAssignSearch(event.target.value)}
-              />
-              <div className={styles.searchPicker}>
-                {getPageItems('assign-users', searchableUsers).map(user => (
-                  <button
-                    key={user.id}
-                    type='button'
-                    className={assignUserId === user.id ? styles.searchOptionActive : styles.searchOption}
-                    onClick={() => setAssignUserId(user.id)}
-                  >
-                    <strong>{user.username}</strong>
-                    <span>{user.activeAccounts} activas</span>
-                  </button>
-                ))}
+              <div className={styles.assignLookup}>
+                <input
+                  className={styles.input}
+                  placeholder={
+                    assignHasInlineUsers
+                      ? 'Usuario por linea activado en asignacion masiva'
+                      : 'Buscar usuario por nombre'
+                  }
+                  value={assignSearch}
+                  disabled={assignHasInlineUsers}
+                  onFocus={() => {
+                    if (!assignHasInlineUsers) setAssignPickerOpen(true)
+                  }}
+                  onChange={event => {
+                    setAssignSearch(event.target.value)
+                    setAssignPickerOpen(true)
+                  }}
+                />
+                {selectedAssignUser && !assignHasInlineUsers && (
+                  <div className={styles.selectedUserCard}>
+                    <strong>{selectedAssignUser.username}</strong>
+                    <span>{selectedAssignUser.activeAccounts} cuentas activas</span>
+                  </div>
+                )}
+                {assignPickerOpen && !assignHasInlineUsers && (
+                  <div className={styles.searchPicker}>
+                    {searchableUsers.length === 0 ? (
+                      <div className={styles.emptyInline}>No hay usuarios con ese nombre.</div>
+                    ) : (
+                      searchableUsers.map(user => (
+                        <button
+                          key={user.id}
+                          type='button'
+                          className={assignUserId === user.id ? styles.searchOptionActive : styles.searchOption}
+                          onClick={() => {
+                            setAssignUserId(user.id)
+                            setAssignSearch(user.username)
+                            setAssignPickerOpen(false)
+                          }}
+                        >
+                          <strong>{user.username}</strong>
+                          <span>{user.activeAccounts} activas</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
-              {renderPagination('assign-users', searchableUsers.length)}
               <div className={styles.formGrid}>
                 <input
                   className={styles.input}
@@ -3259,12 +3415,16 @@ export default function PanelPage() {
                   value={assignForm.accountType}
                   onChange={event => setAssignForm(current => ({ ...current, accountType: event.target.value }))}
                 />
-                <input
-                  className={styles.input}
-                  type='date'
-                  value={assignForm.cutoffDate}
-                  onChange={event => setAssignForm(current => ({ ...current, cutoffDate: event.target.value }))}
-                />
+                <label className={styles.fieldLabel}>
+                  <span>Fecha de corte</span>
+                  <input
+                    className={styles.input}
+                    type='date'
+                    value={assignForm.cutoffDate}
+                    disabled={assignHasInlineData}
+                    onChange={event => setAssignForm(current => ({ ...current, cutoffDate: event.target.value }))}
+                  />
+                </label>
                 <input
                   className={styles.input}
                   placeholder='Precio de renovacion'
@@ -3280,10 +3440,35 @@ export default function PanelPage() {
               </div>
               <textarea
                 className={styles.textarea}
-                placeholder='Correo o varios correos, uno por linea'
+                placeholder={'Correos, uno por linea\ncorreo@dominio.com\ncorreo1,correo2|12/02/2026\ncorreo1,correo2|12/03/2026|usuario'}
                 value={assignForm.emailsText}
                 onChange={event => setAssignForm(current => ({ ...current, emailsText: event.target.value }))}
               />
+              <div className={styles.assignHint}>
+                {assignHasInlineData
+                  ? 'Modo masivo detectado: la fecha de corte se toma de cada linea despues de |.'
+                  : 'Si no usas |, se aplicara el usuario y la fecha de corte seleccionados arriba.'}
+              </div>
+              {assignHasInlineUsers && (
+                <div className={styles.assignHint}>
+                  Usuario por linea activado: el selector superior queda desactivado para evitar mezclas.
+                </div>
+              )}
+              {bulkUserSuggestions.length > 0 && (
+                <div className={styles.suggestionRow}>
+                  <span>Sugerencias:</span>
+                  {bulkUserSuggestions.map(user => (
+                    <button
+                      key={user.id}
+                      type='button'
+                      className={styles.suggestionChip}
+                      onClick={() => applyBulkUserSuggestion(user.username)}
+                    >
+                      {user.username}
+                    </button>
+                  ))}
+                </div>
+              )}
               <button
                 type='button'
                 className={styles.primaryButton}

@@ -8,6 +8,10 @@ type ServiceAccountAccessRow = {
   status: string | null
 }
 
+type ProfileRoleRow = {
+  role: string | null
+}
+
 export class CodesAccessError extends Error {
   status: number
 
@@ -43,6 +47,23 @@ export async function enforceCodesRecipientAccess(params: {
   }
 
   const userId = userResp.user.id
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from('profiles')
+    .select('role')
+    .eq('id', userId)
+    .maybeSingle()
+
+  if (profileError) {
+    throw new CodesAccessError(profileError.message, 500)
+  }
+
+  if (((profile || null) as ProfileRoleRow | null)?.role === 'owner') {
+    return {
+      mode: 'owner' as const,
+      userId,
+    }
+  }
+
   const { data: accounts, error: accountsError } = await supabaseAdmin
     .from('service_accounts')
     .select('id, assigned_user_id, account_email, status')

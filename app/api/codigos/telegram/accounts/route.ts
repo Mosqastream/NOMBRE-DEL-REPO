@@ -12,6 +12,10 @@ type TelegramAccountRow = {
   account_email: string | null
 }
 
+type ProfileRoleRow = {
+  role: string | null
+}
+
 const normalizeEmail = (value: unknown) => String(value || '').trim().toLowerCase()
 
 export async function GET(request: NextRequest) {
@@ -27,6 +31,41 @@ export async function GET(request: NextRequest) {
     const userResp = await supabaseAdmin.auth.getUser(token)
     if (userResp.error || !userResp.data.user) {
       return NextResponse.json({ recipients: [] })
+    }
+
+    const profileResp = await supabaseAdmin
+      .from('profiles')
+      .select('role')
+      .eq('id', userResp.data.user.id)
+      .maybeSingle()
+
+    if (profileResp.error) {
+      throw new Error(profileResp.error.message)
+    }
+
+    const isOwner = ((profileResp.data || null) as ProfileRoleRow | null)?.role === 'owner'
+
+    if (isOwner) {
+      const telegramResp = await supabaseAdmin
+        .from('telegram_code_accounts')
+        .select('account_email')
+        .eq('enabled', true)
+        .order('created_at', { ascending: false })
+        .limit(1000)
+
+      if (telegramResp.error) {
+        throw new Error(telegramResp.error.message)
+      }
+
+      const recipients = Array.from(
+        new Set(
+          ((telegramResp.data || []) as TelegramAccountRow[])
+            .map(row => normalizeEmail(row.account_email))
+            .filter(Boolean)
+        )
+      )
+
+      return NextResponse.json({ recipients })
     }
 
     const accountsResp = await supabaseAdmin

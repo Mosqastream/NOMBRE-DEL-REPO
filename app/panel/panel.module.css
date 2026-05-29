@@ -200,7 +200,7 @@
 .navItem,
 .navItemActive {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   min-height: 62px;
@@ -233,6 +233,21 @@
   font-size: 0.94rem;
   font-weight: 800;
   line-height: 1.1;
+}
+
+.navCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(255, 31, 45, 0.96), rgba(118, 10, 16, 0.96));
+  color: #fff;
+  font-size: 0.76rem;
+  font-weight: 950;
+  box-shadow: 0 10px 22px rgba(229, 9, 20, 0.24);
 }
 
 .navIcon {
@@ -1014,6 +1029,72 @@
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.02);
+}
+
+.assignLookup {
+  position: relative;
+  display: grid;
+  gap: 10px;
+}
+
+.selectedUserCard,
+.assignHint,
+.emptyInline {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.selectedUserCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.selectedUserCard strong {
+  color: #fff;
+}
+
+.assignHint,
+.emptyInline {
+  padding: 11px 12px;
+  font-size: 0.9rem;
+}
+
+.fieldLabel {
+  display: grid;
+  gap: 7px;
+}
+
+.fieldLabel span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.suggestionRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.suggestionChip {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 43, 55, 0.35);
+  background: rgba(255, 43, 55, 0.12);
+  color: #fff;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 .searchOption,

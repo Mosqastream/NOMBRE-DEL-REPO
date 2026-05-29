@@ -9,7 +9,14 @@ export type UserSectionId =
   | 'codigos'
   | 'historial'
   | 'configuracion'
-export type OwnerSectionId = 'vip' | 'solicitudes' | 'asignacion' | 'ventas' | 'telegram' | 'historial'
+export type OwnerSectionId =
+  | 'solicitudes'
+  | 'asignacion'
+  | 'ventas'
+  | 'telegram'
+  | 'codigos'
+  | 'historial'
+  | 'configuracion'
 export type PanelSectionId = UserSectionId | OwnerSectionId
 
 export type ServiceAccountStatus = 'activa' | 'pausada' | 'sin_pago' | 'desactivada'

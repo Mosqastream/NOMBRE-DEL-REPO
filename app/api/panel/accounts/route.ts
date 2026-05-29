@@ -95,6 +95,11 @@ export async function POST(request: NextRequest) {
       paymentProofDataUrl?: string
       userId?: string
       emails?: string[]
+      assignments?: Array<{
+        userId?: string
+        email?: string
+        cutoffDate?: string | null
+      }>
       serviceName?: string
       accountType?: string
       cutoffDate?: string
@@ -108,25 +113,38 @@ export async function POST(request: NextRequest) {
     if (action === 'assign') {
       const session = await requirePanelSession(request, true)
       const userId = String(body.userId || '').trim()
-      const emails = Array.from(
-        new Set(
-          Array.isArray(body.emails)
-            ? body.emails.map(item => String(item || '').trim().toLowerCase()).filter(Boolean)
-            : []
-        )
-      )
+      const rawAssignments = Array.isArray(body.assignments) ? body.assignments : []
+      const assignments =
+        rawAssignments.length > 0
+          ? rawAssignments
+              .map(item => ({
+                userId: String(item.userId || '').trim(),
+                accountEmail: String(item.email || '').trim().toLowerCase(),
+                cutoffDate: parseNullableDate(item.cutoffDate),
+              }))
+              .filter(item => item.userId && item.accountEmail)
+          : Array.from(
+              new Set(
+                Array.isArray(body.emails)
+                  ? body.emails.map(item => String(item || '').trim().toLowerCase()).filter(Boolean)
+                  : []
+              )
+            ).map(accountEmail => ({
+              userId,
+              accountEmail,
+              cutoffDate: parseNullableDate(body.cutoffDate),
+            }))
       const serviceName = String(body.serviceName || 'Netflix').trim() || 'Netflix'
       const accountType = String(body.accountType || 'Cuenta completa').trim() || 'Cuenta completa'
-      const cutoffDate = parseNullableDate(body.cutoffDate)
       const renewalPrice = parseMoney(body.renewalPrice, 0)
       const renewalPeriodDays = Math.max(1, Number(body.renewalPeriodDays || 30) || 30)
       const status = String(body.status || 'activa').trim() as ServiceAccountStatus
 
-      if (!userId) {
+      if (assignments.some(item => !item.userId)) {
         throw new PanelApiError('Selecciona un usuario.', 400)
       }
 
-      if (emails.length === 0) {
+      if (assignments.length === 0) {
         throw new PanelApiError('Agrega al menos un correo para asignar.', 400)
       }
 
@@ -134,28 +152,35 @@ export async function POST(request: NextRequest) {
         throw new PanelApiError('Estado de cuenta no valido.', 400)
       }
 
+      const targetUserIds = Array.from(new Set(assignments.map(item => item.userId)))
       const targetResp = await session.supabaseAdmin
         .from('profiles')
         .select('id, username')
-        .eq('id', userId)
-        .maybeSingle()
+        .in('id', targetUserIds)
 
       if (targetResp.error) {
         throw new PanelApiError(targetResp.error.message, 500)
       }
 
-      const targetUser = (targetResp.data || null) as ProfileMiniRow | null
-      if (!targetUser?.id) {
-        throw new PanelApiError('Ese usuario ya no existe en profiles.', 404)
+      const targetUsers = (targetResp.data || []) as ProfileMiniRow[]
+      const validTargetIds = new Set(targetUsers.map(item => item.id))
+      if (targetUserIds.some(id => !validTargetIds.has(id))) {
+        throw new PanelApiError('Uno de los usuarios ya no existe en profiles.', 404)
       }
 
-      const rows = emails.map(accountEmail => ({
+      const uniqueAssignments = Array.from(
+        new Map(
+          assignments.map(item => [`${item.userId}:${serviceName}:${item.accountEmail}`, item])
+        ).values()
+      )
+
+      const rows = uniqueAssignments.map(item => ({
         owner_id: session.profile.id,
-        assigned_user_id: userId,
+        assigned_user_id: item.userId,
         service_name: serviceName,
-        account_email: accountEmail,
+        account_email: item.accountEmail,
         account_type: accountType,
-        cutoff_date: cutoffDate,
+        cutoff_date: item.cutoffDate,
         renewal_price: renewalPrice,
         renewal_period_days: renewalPeriodDays,
         status,
