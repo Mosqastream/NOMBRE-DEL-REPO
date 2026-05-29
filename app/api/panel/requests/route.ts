@@ -18,6 +18,7 @@ type RequestRow = {
   service_accounts?: {
     account_email: string
     service_name: string
+    root_account_id?: string | null
   } | null
 }
 
@@ -220,22 +221,39 @@ export async function POST(request: NextRequest) {
         throw new PanelApiError('Ingresa un correo valido para reemplazar.', 400)
       }
 
+      const accountChainResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .select('id, root_account_id')
+        .eq('id', currentRequest.account_id)
+        .eq('owner_id', session.profile.id)
+        .maybeSingle()
+
+      if (accountChainResp.error) {
+        throw new PanelApiError(accountChainResp.error.message, 500)
+      }
+
+      const accountChain = (accountChainResp.data || null) as { id: string; root_account_id: string | null } | null
+      if (!accountChain?.id) {
+        throw new PanelApiError('No se encontro la cuenta para reemplazar.', 404)
+      }
+
+      const rootAccountId = accountChain.root_account_id || accountChain.id
+
       const updateAccountResp = await session.supabaseAdmin
         .from('service_accounts')
         .update({
           account_email: accountEmail,
           updated_at: new Date().toISOString(),
         } as never)
-        .eq('id', currentRequest.account_id)
         .eq('owner_id', session.profile.id)
+        .or(`id.eq.${rootAccountId},root_account_id.eq.${rootAccountId}`)
         .select('id')
-        .maybeSingle()
 
       if (updateAccountResp.error) {
         throw new PanelApiError(updateAccountResp.error.message, 500)
       }
 
-      if (!updateAccountResp.data) {
+      if ((updateAccountResp.data || []).length === 0) {
         throw new PanelApiError('No se encontro la cuenta para reemplazar.', 404)
       }
 

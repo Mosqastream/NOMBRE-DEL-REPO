@@ -224,11 +224,31 @@ function removeAccountFromPayload(
   payload: PanelBootstrapPayload,
   accountId: string
 ): PanelBootstrapPayload {
+  const idsToRemove = new Set<string>([accountId])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const account of payload.accounts || []) {
+      if (account.parentAccountId && idsToRemove.has(account.parentAccountId) && !idsToRemove.has(account.id)) {
+        idsToRemove.add(account.id)
+        changed = true
+      }
+    }
+    for (const user of payload.allUsers || []) {
+      for (const account of user.accounts || []) {
+        if (account.parentAccountId && idsToRemove.has(account.parentAccountId) && !idsToRemove.has(account.id)) {
+          idsToRemove.add(account.id)
+          changed = true
+        }
+      }
+    }
+  }
+
   return normalizePanelPayload({
     ...payload,
-    accounts: (payload.accounts || []).filter(account => account.id !== accountId),
+    accounts: (payload.accounts || []).filter(account => !idsToRemove.has(account.id)),
     allUsers: (payload.allUsers || []).map(user => {
-      const nextAccounts = (user.accounts || []).filter(account => account.id !== accountId)
+      const nextAccounts = (user.accounts || []).filter(account => !idsToRemove.has(account.id))
       return {
         ...user,
         activeAccounts: nextAccounts.filter(account => account.status === 'activa').length,
@@ -243,10 +263,17 @@ function replaceAccountEmailInPayload(
   accountId: string,
   accountEmail: string
 ): PanelBootstrapPayload {
+  const targetAccount =
+    (payload.accounts || []).find(account => account.id === accountId) ||
+    (payload.allUsers || []).flatMap(user => user.accounts || []).find(account => account.id === accountId)
+  const rootAccountId = targetAccount?.rootAccountId || targetAccount?.id || accountId
+  const shouldReplace = (account: PanelAccount) =>
+    account.id === accountId || account.id === rootAccountId || account.rootAccountId === rootAccountId
+
   return normalizePanelPayload({
     ...payload,
     accounts: (payload.accounts || []).map(account =>
-      account.id === accountId ? { ...account, accountEmail, updatedAt: new Date().toISOString() } : account
+      shouldReplace(account) ? { ...account, accountEmail, updatedAt: new Date().toISOString() } : account
     ),
     supportRequests: (payload.supportRequests || []).map(request =>
       request.accountId === accountId ? { ...request, accountEmail, updatedAt: new Date().toISOString() } : request
@@ -254,7 +281,7 @@ function replaceAccountEmailInPayload(
     allUsers: (payload.allUsers || []).map(user => ({
       ...user,
       accounts: (user.accounts || []).map(account =>
-        account.id === accountId ? { ...account, accountEmail, updatedAt: new Date().toISOString() } : account
+        shouldReplace(account) ? { ...account, accountEmail, updatedAt: new Date().toISOString() } : account
       ),
     })),
   })
@@ -472,6 +499,12 @@ export default function PanelPage() {
   const [productOpen, setProductOpen] = useState(false)
   const [pendingUserOpen, setPendingUserOpen] = useState(false)
   const [pendingUsername, setPendingUsername] = useState('')
+  const [childAssignOpen, setChildAssignOpen] = useState(false)
+  const [childAssignUserId, setChildAssignUserId] = useState('')
+  const [childAssignAccountId, setChildAssignAccountId] = useState('')
+  const [childAssignCutoffDate, setChildAssignCutoffDate] = useState('')
+  const [childAssignSearch, setChildAssignSearch] = useState('')
+  const [childAssignPickerOpen, setChildAssignPickerOpen] = useState(false)
   const [assignSearch, setAssignSearch] = useState('')
   const [assignUserId, setAssignUserId] = useState('')
   const [assignPickerOpen, setAssignPickerOpen] = useState(false)
@@ -517,9 +550,14 @@ export default function PanelPage() {
     }))
   }
 
+  const isSubclientProfile = Boolean(profile?.parentId)
+
   const visibleSections = useMemo(
-    () => (panelView === 'owner' ? OWNER_SECTIONS : USER_SECTIONS),
-    [panelView]
+    () =>
+      panelView === 'owner'
+        ? OWNER_SECTIONS
+        : USER_SECTIONS.filter(section => !isSubclientProfile || section.id !== 'compras'),
+    [isSubclientProfile, panelView]
   )
 
   const currentSection =
@@ -609,6 +647,24 @@ export default function PanelPage() {
   const selectedAssignUser = useMemo(
     () => (panelData?.allUsers || []).find(user => user.id === assignUserId) || null,
     [assignUserId, panelData?.allUsers]
+  )
+
+  const childUsers = useMemo(() => panelData?.allUsers || [], [panelData?.allUsers])
+
+  const childAssignableUsers = useMemo(() => {
+    const term = childAssignSearch.trim().toLowerCase()
+    if (!term) return childUsers
+    return childUsers.filter(user => user.username.toLowerCase().includes(term))
+  }, [childAssignSearch, childUsers])
+
+  const selectedChildAssignUser = useMemo(
+    () => childUsers.find(user => user.id === childAssignUserId) || null,
+    [childAssignUserId, childUsers]
+  )
+
+  const ownPanelAccounts = useMemo(
+    () => (panelData?.accounts || []).filter(account => account.assignedUserId === profile?.id),
+    [panelData?.accounts, profile?.id]
   )
 
   const assignHasInlineData = assignForm.emailsText.includes('|')
@@ -792,6 +848,12 @@ export default function PanelPage() {
     if (panelView !== 'owner' || activeSection !== 'telegram') return
     void fetchTelegramAccounts()
   }, [activeSection, panelView])
+
+  useEffect(() => {
+    if (isSubclientProfile && activeSection === 'compras') {
+      setActiveSection('cuentas')
+    }
+  }, [activeSection, isSubclientProfile])
 
   useEffect(() => {
     if (!profile?.id) return
@@ -1514,6 +1576,36 @@ export default function PanelPage() {
     }
   }
 
+  const submitChildAssign = async () => {
+    setSaving(true)
+    setError('')
+    try {
+      const payload = await callPanelApi('/api/panel/accounts', {
+        action: 'delegate',
+        accountId: childAssignAccountId,
+        userId: childAssignUserId,
+        cutoffDate: childAssignCutoffDate || undefined,
+      })
+
+      if (payload.accounts?.length) {
+        setPanelData(current => (current ? appendAccountsToPayload(current, payload.accounts || []) : current))
+      }
+
+      setChildAssignOpen(false)
+      setChildAssignUserId('')
+      setChildAssignAccountId('')
+      setChildAssignCutoffDate('')
+      setChildAssignSearch('')
+      setChildAssignPickerOpen(false)
+      setNotice(payload.message || 'Cuenta asignada al subcliente.')
+      await refreshPanel(true)
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'No se pudo asignar al subcliente.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const removeAccount = async (accountId: string) => {
     const snapshot = panelData
     setSaving(true)
@@ -1812,7 +1904,7 @@ export default function PanelPage() {
   }
 
   const renderAccountsSection = () => {
-    const accounts = panelData?.accounts || []
+    const accounts = ownPanelAccounts
     const accountCounts = {
       todos: accounts.length,
       vigentes: accounts.filter(account => {
@@ -2139,11 +2231,52 @@ export default function PanelPage() {
             <span className={styles.blockEyebrow}>Usuarios</span>
             <h3>Subclientes</h3>
           </div>
-          <button type='button' className={styles.primaryButton} onClick={() => setPendingUserOpen(true)}>
-            Crear usuario
-          </button>
+          <div className={styles.inlineActions}>
+            <button type='button' className={styles.secondaryButton} onClick={() => setChildAssignOpen(true)}>
+              Asignar cuenta
+            </button>
+            <button type='button' className={styles.primaryButton} onClick={() => setPendingUserOpen(true)}>
+              Crear usuario
+            </button>
+          </div>
         </div>
-        <div className={styles.emptyCard}>Crea un usuario pendiente y pasale /subcliente para que termine su registro.</div>
+        {childUsers.length === 0 ? (
+          <div className={styles.emptyCard}>Crea un usuario pendiente y pasale /subcliente para que termine su registro.</div>
+        ) : (
+          <div className={styles.subclientGrid}>
+            {childUsers.map(user => (
+              <article key={user.id} className={styles.subclientCard}>
+                <div className={styles.subclientCardTop}>
+                  <div>
+                    <strong>{user.username}</strong>
+                    <span>{user.accounts.length} cuentas</span>
+                  </div>
+                  {user.onboardingStatus === 'pending' && <span className={styles.badgeWarning}>Pendiente</span>}
+                </div>
+                {user.accounts.length > 0 && (
+                  <div className={styles.subclientAccounts}>
+                    {user.accounts.map(account => (
+                      <div key={account.id} className={styles.subclientAccountRow}>
+                        <div>
+                          <strong>{account.serviceName}</strong>
+                          <span>{account.accountEmail}</span>
+                        </div>
+                        <button
+                          type='button'
+                          className={styles.ghostButton}
+                          onClick={() => void removeAccount(account.id)}
+                          disabled={saving}
+                        >
+                          Quitar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -3555,6 +3688,144 @@ export default function PanelPage() {
                 disabled={saving}
               >
                 Crear usuario
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {childAssignOpen && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modalCardWide}>
+            <div className={styles.modalHeader}>
+              <div>
+                <span className={styles.blockEyebrow}>Subclientes</span>
+                <h3>Asignar cuenta</h3>
+              </div>
+              <button
+                type='button'
+                className={styles.modalClose}
+                onClick={() => {
+                  setChildAssignOpen(false)
+                  setChildAssignUserId('')
+                  setChildAssignAccountId('')
+                  setChildAssignCutoffDate('')
+                  setChildAssignSearch('')
+                  setChildAssignPickerOpen(false)
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className={styles.formStack}>
+              {selectedChildAssignUser ? (
+                <div className={styles.selectedUserCard}>
+                  <div>
+                    <span className={styles.blockEyebrow}>Subcliente seleccionado</span>
+                    <strong>{selectedChildAssignUser.username}</strong>
+                    <small>{selectedChildAssignUser.accounts.length} cuentas actuales</small>
+                  </div>
+                  <button
+                    type='button'
+                    className={styles.ghostButton}
+                    onClick={() => {
+                      setChildAssignUserId('')
+                      setChildAssignSearch('')
+                      setChildAssignPickerOpen(false)
+                    }}
+                  >
+                    Cambiar
+                  </button>
+                </div>
+              ) : (
+                <div className={styles.assignLookup}>
+                  <div className={styles.assignSearchRow}>
+                    <input
+                      className={styles.input}
+                      placeholder='Buscar subcliente'
+                      value={childAssignSearch}
+                      onChange={event => {
+                        setChildAssignSearch(event.target.value)
+                        setChildAssignPickerOpen(false)
+                      }}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          setChildAssignPickerOpen(true)
+                        }
+                      }}
+                    />
+                    <button
+                      type='button'
+                      className={styles.secondaryButton}
+                      onClick={() => setChildAssignPickerOpen(true)}
+                    >
+                      Buscar
+                    </button>
+                  </div>
+                  {childAssignPickerOpen && (
+                    <div className={styles.searchPicker}>
+                      {childAssignableUsers.length === 0 ? (
+                        <div className={styles.emptyInline}>No hay subclientes con ese nombre.</div>
+                      ) : (
+                        childAssignableUsers.map(user => (
+                          <button
+                            key={user.id}
+                            type='button'
+                            className={styles.searchOption}
+                            onClick={() => {
+                              setChildAssignUserId(user.id)
+                              setChildAssignSearch(user.username)
+                              setChildAssignPickerOpen(false)
+                            }}
+                          >
+                            <strong>{user.username}</strong>
+                            <span>{user.accounts.length} cuentas</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <label className={styles.fieldLabel}>
+                <span>Cuenta a compartir</span>
+                <select
+                  className={styles.input}
+                  value={childAssignAccountId}
+                  onChange={event => setChildAssignAccountId(event.target.value)}
+                >
+                  <option value=''>Selecciona una cuenta</option>
+                  {ownPanelAccounts.map(account => (
+                    <option key={account.id} value={account.id}>
+                      {account.serviceName} - {account.accountEmail}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className={styles.fieldLabel}>
+                <span>Fecha de corte para el subcliente</span>
+                <input
+                  className={styles.input}
+                  type='date'
+                  value={childAssignCutoffDate}
+                  onChange={event => setChildAssignCutoffDate(event.target.value)}
+                />
+              </label>
+
+              <div className={styles.assignHint}>
+                La misma cuenta solo puede bajar 5 veces en total. Si quitas esta cuenta, tambien se quita de sus subclientes.
+              </div>
+
+              <button
+                type='button'
+                className={styles.primaryButton}
+                onClick={() => void submitChildAssign()}
+                disabled={saving}
+              >
+                Guardar asignacion
               </button>
             </div>
           </div>

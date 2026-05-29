@@ -8,6 +8,9 @@ type ProfileRow = {
   role: 'usuario' | 'owner'
   phone: string | null
   telegram: string | null
+  parent_id?: string | null
+  created_by_id?: string | null
+  onboarding_status?: 'active' | 'pending' | null
   created_at: string
 }
 
@@ -37,7 +40,7 @@ export async function requirePanelSession(request: NextRequest, requireOwner = f
 
   const profileResp = await supabaseAdmin
     .from('profiles')
-    .select('id, username, role, phone, telegram, created_at')
+    .select('id, username, role, phone, telegram, parent_id, created_by_id, onboarding_status, created_at')
     .eq('id', userResp.data.user.id)
     .maybeSingle()
 
@@ -56,6 +59,9 @@ export async function requirePanelSession(request: NextRequest, requireOwner = f
     role: profileRow.role === 'owner' ? 'owner' : 'usuario',
     phone: profileRow.phone,
     telegram: profileRow.telegram,
+    parentId: profileRow.parent_id || null,
+    createdById: profileRow.created_by_id || null,
+    onboardingStatus: profileRow.onboarding_status === 'pending' ? 'pending' : 'active',
     createdAt: profileRow.created_at,
   }
 

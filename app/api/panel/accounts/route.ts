@@ -10,6 +10,10 @@ type AccountRow = {
   id: string
   owner_id: string
   assigned_user_id: string
+  assigned_by_id?: string | null
+  parent_account_id?: string | null
+  root_account_id?: string | null
+  assignment_depth?: number
   service_name?: string
   account_email?: string
   account_type?: string
@@ -24,6 +28,8 @@ type AccountRow = {
 type ProfileMiniRow = {
   id: string
   username: string
+  parent_id?: string | null
+  created_by_id?: string | null
 }
 
 const ACCOUNT_STATUSES = new Set<ServiceAccountStatus>(['activa', 'pausada', 'sin_pago', 'desactivada'])
@@ -49,6 +55,10 @@ function mapAssignedAccount(params: {
     ownerId: params.row.owner_id,
     ownerUsername: params.ownerUsername,
     assignedUserId: params.row.assigned_user_id,
+    assignedById: params.row.assigned_by_id || null,
+    parentAccountId: params.row.parent_account_id || null,
+    rootAccountId: params.row.root_account_id || params.row.id,
+    assignmentDepth: Number(params.row.assignment_depth || 0),
     cutoffDate: params.row.cutoff_date || null,
     renewalPrice: parseMoney(params.row.renewal_price, 0),
     renewalPeriodDays: Number(params.row.renewal_period_days || 30),
@@ -177,6 +187,10 @@ export async function POST(request: NextRequest) {
       const rows = uniqueAssignments.map(item => ({
         owner_id: session.profile.id,
         assigned_user_id: item.userId,
+        assigned_by_id: session.profile.id,
+        parent_account_id: null,
+        root_account_id: null,
+        assignment_depth: 0,
         service_name: serviceName,
         account_email: item.accountEmail,
         account_type: accountType,
@@ -193,7 +207,7 @@ export async function POST(request: NextRequest) {
           onConflict: 'assigned_user_id,service_name,account_email',
         })
         .select(
-          'id, owner_id, assigned_user_id, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
+          'id, owner_id, assigned_user_id, assigned_by_id, parent_account_id, root_account_id, assignment_depth, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
         )
 
       if (upsertResp.error) {
@@ -203,6 +217,18 @@ export async function POST(request: NextRequest) {
       const savedRows = (upsertResp.data || []) as AccountRow[]
       if (savedRows.length === 0) {
         throw new PanelApiError('Supabase no devolvio cuentas guardadas.', 500)
+      }
+
+      const rowsWithoutRoot = savedRows.filter(row => !row.root_account_id)
+      if (rowsWithoutRoot.length > 0) {
+        await Promise.all(
+          rowsWithoutRoot.map(row =>
+            session.supabaseAdmin
+              .from('service_accounts')
+              .update({ root_account_id: row.id } as never)
+              .eq('id', row.id)
+          )
+        )
       }
 
       return NextResponse.json({
@@ -217,8 +243,134 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    if (action === 'delegate') {
+      const session = await requirePanelSession(request)
+      const accountId = String(body.accountId || '').trim()
+      const targetUserId = String(body.userId || '').trim()
+      const cutoffDate = parseNullableDate(body.cutoffDate)
+
+      if (!accountId || !targetUserId) {
+        throw new PanelApiError('Selecciona una cuenta y un subcliente.', 400)
+      }
+
+      const accountResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .select(
+          'id, owner_id, assigned_user_id, assigned_by_id, parent_account_id, root_account_id, assignment_depth, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
+        )
+        .eq('id', accountId)
+        .eq('assigned_user_id', session.profile.id)
+        .maybeSingle()
+
+      if (accountResp.error) {
+        throw new PanelApiError(accountResp.error.message, 500)
+      }
+
+      const sourceAccount = (accountResp.data || null) as AccountRow | null
+      if (!sourceAccount?.id) {
+        throw new PanelApiError('Solo puedes asignar cuentas que tengas en tu panel.', 403)
+      }
+
+      const targetResp = await session.supabaseAdmin
+        .from('profiles')
+        .select('id, username, parent_id, created_by_id')
+        .eq('id', targetUserId)
+        .maybeSingle()
+
+      if (targetResp.error) {
+        throw new PanelApiError(targetResp.error.message, 500)
+      }
+
+      const targetUser = (targetResp.data || null) as ProfileMiniRow | null
+      if (!targetUser?.id) {
+        throw new PanelApiError('Ese subcliente no existe.', 404)
+      }
+
+      if (targetUser.parent_id !== session.profile.id && targetUser.created_by_id !== session.profile.id) {
+        throw new PanelApiError('Solo puedes asignar cuentas a tus subclientes directos.', 403)
+      }
+
+      const rootAccountId = sourceAccount.root_account_id || sourceAccount.id
+      const currentDepth = Number(sourceAccount.assignment_depth || 0)
+      if (currentDepth >= 5) {
+        throw new PanelApiError('Esta cuenta ya llego al limite de 5 niveles de asignacion.', 400)
+      }
+
+      const duplicateResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .select('id')
+        .eq('assigned_user_id', targetUser.id)
+        .eq('root_account_id', rootAccountId)
+        .limit(1)
+
+      if (duplicateResp.error) {
+        throw new PanelApiError(duplicateResp.error.message, 500)
+      }
+
+      if ((duplicateResp.data || []).length > 0) {
+        throw new PanelApiError('Ese subcliente ya tiene esa misma cuenta.', 409)
+      }
+
+      const branchCountResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .select('id', { count: 'exact', head: true })
+        .eq('root_account_id', rootAccountId)
+        .neq('id', rootAccountId)
+
+      if (branchCountResp.error) {
+        throw new PanelApiError(branchCountResp.error.message, 500)
+      }
+
+      if ((branchCountResp.count || 0) >= 5) {
+        throw new PanelApiError('Esta cuenta ya fue asignada 5 veces.', 400)
+      }
+
+      const insertResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .insert({
+          owner_id: sourceAccount.owner_id,
+          assigned_user_id: targetUser.id,
+          assigned_by_id: session.profile.id,
+          parent_account_id: sourceAccount.id,
+          root_account_id: rootAccountId,
+          assignment_depth: currentDepth + 1,
+          service_name: sourceAccount.service_name || 'Netflix',
+          account_email: sourceAccount.account_email || '',
+          account_type: sourceAccount.account_type || 'Cuenta completa',
+          cutoff_date: cutoffDate || sourceAccount.cutoff_date || null,
+          renewal_price: parseMoney(sourceAccount.renewal_price, 0),
+          renewal_period_days: Number(sourceAccount.renewal_period_days || 30),
+          status: 'activa',
+          updated_at: new Date().toISOString(),
+        } as never)
+        .select(
+          'id, owner_id, assigned_user_id, assigned_by_id, parent_account_id, root_account_id, assignment_depth, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
+        )
+        .maybeSingle()
+
+      if (insertResp.error) {
+        throw new PanelApiError(insertResp.error.message, 500)
+      }
+
+      const savedRow = insertResp.data as AccountRow | null
+      if (!savedRow?.id) {
+        throw new PanelApiError('Supabase no devolvio la cuenta delegada.', 500)
+      }
+
+      return NextResponse.json({
+        message: 'Cuenta asignada al subcliente.',
+        ids: [savedRow.id],
+        accounts: [
+          mapAssignedAccount({
+            row: savedRow as Required<Pick<AccountRow, 'id' | 'owner_id' | 'assigned_user_id'>> & AccountRow,
+            ownerUsername: session.profile.username,
+          }),
+        ],
+      })
+    }
+
     if (action === 'remove') {
-      const session = await requirePanelSession(request, true)
+      const session = await requirePanelSession(request)
       const accountId = String(body.accountId || '').trim()
       if (!accountId) {
         throw new PanelApiError('Cuenta no valida.', 400)
@@ -228,7 +380,7 @@ export async function POST(request: NextRequest) {
         .from('service_accounts')
         .delete()
         .eq('id', accountId)
-        .eq('owner_id', session.profile.id)
+        .or(`owner_id.eq.${session.profile.id},assigned_by_id.eq.${session.profile.id}`)
         .select('id')
 
       if (deleteResp.error) {

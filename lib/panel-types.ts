@@ -38,6 +38,9 @@ export type PanelProfile = {
   role: PanelRole
   phone: string | null
   telegram: string | null
+  parentId: string | null
+  createdById: string | null
+  onboardingStatus: 'active' | 'pending'
   createdAt: string
 }
 
@@ -49,6 +52,10 @@ export type PanelAccount = {
   ownerId: string
   ownerUsername: string
   assignedUserId: string
+  assignedById: string | null
+  parentAccountId: string | null
+  rootAccountId: string | null
+  assignmentDepth: number
   cutoffDate: string | null
   renewalPrice: number
   renewalPeriodDays: number
@@ -152,6 +159,9 @@ export type PanelOwnerUser = {
   role: PanelRole
   telegram: string | null
   phone: string | null
+  parentId: string | null
+  createdById: string | null
+  onboardingStatus: 'active' | 'pending'
   createdAt: string
   activeAccounts: number
   accounts: PanelAccount[]

@@ -18,6 +18,9 @@ type ProfileMiniRow = {
   role: PanelRole
   phone: string | null
   telegram: string | null
+  parent_id?: string | null
+  created_by_id?: string | null
+  onboarding_status?: 'active' | 'pending' | null
   created_at: string
 }
 
@@ -25,6 +28,10 @@ type AccountRow = {
   id: string
   owner_id: string
   assigned_user_id: string
+  assigned_by_id?: string | null
+  parent_account_id?: string | null
+  root_account_id?: string | null
+  assignment_depth?: number
   service_name: string
   account_email: string
   account_type: string
@@ -146,6 +153,10 @@ function mapAccount(row: AccountRow, profilesById: Map<string, ProfileMiniRow>):
     ownerId: row.owner_id,
     ownerUsername: ownerProfile?.username || 'owner',
     assignedUserId: row.assigned_user_id,
+    assignedById: row.assigned_by_id || null,
+    parentAccountId: row.parent_account_id || null,
+    rootAccountId: row.root_account_id || row.id,
+    assignmentDepth: Number(row.assignment_depth || 0),
     cutoffDate: row.cutoff_date,
     renewalPrice: toNumber(row.renewal_price),
     renewalPeriodDays: row.renewal_period_days,
@@ -276,7 +287,7 @@ export async function fetchPanelBootstrap(
 ): Promise<PanelBootstrapPayload> {
   const profilesResp = await supabaseAdmin
     .from('profiles')
-    .select('id, username, role, phone, telegram, created_at')
+    .select('id, username, role, phone, telegram, parent_id, created_by_id, onboarding_status, created_at')
     .order('created_at', { ascending: false })
     .range(0, 9999)
 
@@ -288,7 +299,7 @@ export async function fetchPanelBootstrap(
   const profilesById = new Map(profiles.map(item => [item.id, item]))
 
   const accountSelect =
-    'id, owner_id, assigned_user_id, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
+    'id, owner_id, assigned_user_id, assigned_by_id, parent_account_id, root_account_id, assignment_depth, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
   const requestSelect =
     'id, account_id, requester_id, owner_id, request_kind, status, subject, description, payment_proof_data_url, renewal_price, created_at, updated_at'
   const saleSelect =
@@ -324,7 +335,7 @@ export async function fetchPanelBootstrap(
   const visibleAccountsQuery =
     profile.role === 'owner'
       ? accountsQuery.or(`owner_id.eq.${profile.id},assigned_user_id.eq.${profile.id}`)
-      : accountsQuery.eq('assigned_user_id', profile.id)
+      : accountsQuery.or(`assigned_user_id.eq.${profile.id},assigned_by_id.eq.${profile.id}`)
 
   const visibleRequestsQuery =
     profile.role === 'owner'
@@ -334,7 +345,9 @@ export async function fetchPanelBootstrap(
   const visibleProductsQuery =
     profile.role === 'owner'
       ? productsQuery.or(`owner_id.eq.${profile.id},in_stock.eq.true`)
-      : productsQuery.eq('in_stock', true)
+      : profile.parentId
+        ? productsQuery.eq('owner_id', '00000000-0000-0000-0000-000000000000')
+        : productsQuery.eq('in_stock', true)
 
   const visibleSalesQuery =
     profile.role === 'owner'
@@ -439,12 +452,32 @@ export async function fetchPanelBootstrap(
             role: item.role === 'owner' ? 'owner' : 'usuario',
             telegram: item.telegram,
             phone: item.phone,
+            parentId: item.parent_id || null,
+            createdById: item.created_by_id || null,
+            onboardingStatus: item.onboarding_status === 'pending' ? 'pending' : 'active',
             createdAt: item.created_at,
             activeAccounts: userAccounts.filter(account => account.status === 'activa').length,
             accounts: userAccounts,
           }
         })
-      : []
+      : profiles
+          .filter(item => item.parent_id === profile.id || item.created_by_id === profile.id)
+          .map(item => {
+            const userAccounts = accounts.filter(account => account.assignedUserId === item.id)
+            return {
+              id: item.id,
+              username: item.username,
+              role: item.role === 'owner' ? 'owner' : 'usuario',
+              telegram: item.telegram,
+              phone: item.phone,
+              parentId: item.parent_id || null,
+              createdById: item.created_by_id || null,
+              onboardingStatus: item.onboarding_status === 'pending' ? 'pending' : 'active',
+              createdAt: item.created_at,
+              activeAccounts: userAccounts.filter(account => account.status === 'activa').length,
+              accounts: userAccounts,
+            }
+          })
 
   return {
     profile,
