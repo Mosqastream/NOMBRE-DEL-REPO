@@ -113,6 +113,7 @@
 .viewButtonActive,
 .primaryButton,
 .secondaryButton,
+.dangerButton,
 .ghostButton,
 .exitButton,
 .mobileExitButton,
@@ -156,10 +157,17 @@
   text-decoration: none;
 }
 
+.dangerButton {
+  background: linear-gradient(135deg, rgba(255, 54, 67, 0.95), rgba(104, 8, 14, 0.95));
+  border: 1px solid rgba(255, 117, 117, 0.35);
+  box-shadow: 0 18px 35px rgba(255, 31, 45, 0.18);
+}
+
 .viewButton:hover,
 .viewButtonActive:hover,
 .primaryButton:hover,
 .secondaryButton:hover,
+.dangerButton:hover,
 .ghostButton:hover,
 .exitButton:hover,
 .mobileExitButton:hover,
@@ -175,6 +183,7 @@
 .viewButtonActive:disabled,
 .primaryButton:disabled,
 .secondaryButton:disabled,
+.dangerButton:disabled,
 .ghostButton:disabled,
 .exitButton:disabled,
 .mobileExitButton:disabled,
@@ -1118,15 +1127,37 @@
 
 .fieldLabel {
   display: grid;
+  flex: 1;
   gap: 7px;
 }
 
-.fieldLabel span {
+.fieldLabel > span {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 900;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.confirmBox {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 73, 83, 0.26);
+  background:
+    radial-gradient(circle at 90% 15%, rgba(255, 31, 45, 0.18), transparent 30%),
+    rgba(255, 255, 255, 0.035);
+}
+
+.confirmBox strong {
+  color: #fff;
+  word-break: break-word;
+}
+
+.confirmBox span {
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .suggestionRow {

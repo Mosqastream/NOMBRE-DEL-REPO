@@ -556,6 +556,7 @@ export default function PanelPage() {
   const [supportChoiceAccount, setSupportChoiceAccount] = useState<PanelAccount | null>(null)
   const [issueAccount, setIssueAccount] = useState<PanelAccount | null>(null)
   const [renewalAccount, setRenewalAccount] = useState<PanelAccount | null>(null)
+  const [removeConfirmAccount, setRemoveConfirmAccount] = useState<PanelAccount | null>(null)
   const [replacementEmail, setReplacementEmail] = useState('')
   const [buyProduct, setBuyProduct] = useState<PanelProduct | null>(null)
   const [assignOpen, setAssignOpen] = useState(false)
@@ -1836,6 +1837,7 @@ export default function PanelPage() {
 
   const removeAccount = async (accountId: string) => {
     const snapshot = panelData
+    setRemoveConfirmAccount(null)
     setSaving(true)
     setError('')
     try {
@@ -2457,24 +2459,30 @@ export default function PanelPage() {
             </div>
 
             <div className={styles.composerCard}>
-              <textarea
-                className={styles.textarea}
-                placeholder='Escribe tu mensaje para el chat en vivo...'
-                value={messageForm.body}
-                onChange={event => setMessageForm(current => ({ ...current, body: event.target.value }))}
-              />
+              <label className={styles.fieldLabel}>
+                <span>Mensaje para el chat</span>
+                <textarea
+                  className={styles.textarea}
+                  placeholder='Escribe tu respuesta o detalle adicional.'
+                  value={messageForm.body}
+                  onChange={event => setMessageForm(current => ({ ...current, body: event.target.value }))}
+                />
+              </label>
               <div className={styles.composerActions}>
-                <label className={styles.fileButton}>
-                  Adjuntar imagen
-                  <input
-                    type='file'
-                    accept='image/*'
-                    onChange={event =>
-                      void handleFileChange(event, value =>
-                        setMessageForm(current => ({ ...current, imageDataUrl: value }))
-                      )
-                    }
-                  />
+                <label className={styles.fieldLabel}>
+                  <span>Imagen opcional</span>
+                  <span className={styles.fileButton}>
+                    Adjuntar imagen
+                    <input
+                      type='file'
+                      accept='image/*'
+                      onChange={event =>
+                        void handleFileChange(event, value =>
+                          setMessageForm(current => ({ ...current, imageDataUrl: value }))
+                        )
+                      }
+                    />
+                  </span>
                 </label>
                 <button
                   type='button'
@@ -2683,7 +2691,7 @@ export default function PanelPage() {
                                 type='button'
                                 className={styles.iconDangerButton}
                                 title='Quitar cuenta'
-                                onClick={() => void removeAccount(account.id)}
+                                onClick={() => setRemoveConfirmAccount(account)}
                               >
                                 🗑️
                               </button>
@@ -2867,7 +2875,7 @@ export default function PanelPage() {
                                 <button
                                   type='button'
                                   className={styles.ghostButton}
-                                  onClick={() => void removeAccount(account.id)}
+                                  onClick={() => setRemoveConfirmAccount(account)}
                                 >
                                   Quitar cuenta
                                 </button>
@@ -3049,7 +3057,7 @@ export default function PanelPage() {
                               type='button'
                               className={styles.iconDangerButton}
                               title='Quitar cuenta'
-                              onClick={() => void removeAccount(account.id)}
+                              onClick={() => setRemoveConfirmAccount(account)}
                             >
                               🗑️
                             </button>
@@ -3090,7 +3098,7 @@ export default function PanelPage() {
                         type='button'
                         className={styles.iconDangerButton}
                         title='Quitar cuenta'
-                        onClick={() => void removeAccount(account.id)}
+                        onClick={() => setRemoveConfirmAccount(account)}
                       >
                         🗑️
                       </button>
@@ -3375,24 +3383,30 @@ export default function PanelPage() {
             </div>
 
             <div className={styles.composerCard}>
-              <textarea
-                className={styles.textarea}
-                placeholder='Escribe tu mensaje para el chat en vivo...'
-                value={messageForm.body}
-                onChange={event => setMessageForm(current => ({ ...current, body: event.target.value }))}
-              />
+              <label className={styles.fieldLabel}>
+                <span>Mensaje para el chat</span>
+                <textarea
+                  className={styles.textarea}
+                  placeholder='Escribe tu respuesta o detalle adicional.'
+                  value={messageForm.body}
+                  onChange={event => setMessageForm(current => ({ ...current, body: event.target.value }))}
+                />
+              </label>
               <div className={styles.composerActions}>
-                <label className={styles.fileButton}>
-                  Adjuntar imagen
-                  <input
-                    type='file'
-                    accept='image/*'
-                    onChange={event =>
-                      void handleFileChange(event, value =>
-                        setMessageForm(current => ({ ...current, imageDataUrl: value }))
-                      )
-                    }
-                  />
+                <label className={styles.fieldLabel}>
+                  <span>Imagen opcional</span>
+                  <span className={styles.fileButton}>
+                    Adjuntar imagen
+                    <input
+                      type='file'
+                      accept='image/*'
+                      onChange={event =>
+                        void handleFileChange(event, value =>
+                          setMessageForm(current => ({ ...current, imageDataUrl: value }))
+                        )
+                      }
+                    />
+                  </span>
                 </label>
                 <button
                   type='button'
@@ -3964,6 +3978,43 @@ export default function PanelPage() {
         {renderSectionButtons(styles.mobileNavList)}
       </div>
 
+      {removeConfirmAccount && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modalCard}>
+            <div className={styles.modalHeader}>
+              <div>
+                <span className={styles.blockEyebrow}>Confirmacion</span>
+                <h3>Quitar cuenta</h3>
+              </div>
+              <button type='button' className={styles.modalClose} onClick={() => setRemoveConfirmAccount(null)}>
+                Cerrar
+              </button>
+            </div>
+            <div className={styles.formStack}>
+              <div className={styles.confirmBox}>
+                <strong>{removeConfirmAccount.accountEmail}</strong>
+                <span>
+                  Se quitara esta cuenta del usuario seleccionado y tambien de sus subclientes vinculados.
+                </span>
+              </div>
+              <div className={styles.modalActions}>
+                <button type='button' className={styles.secondaryButton} onClick={() => setRemoveConfirmAccount(null)}>
+                  Cancelar
+                </button>
+                <button
+                  type='button'
+                  className={styles.dangerButton}
+                  onClick={() => void removeAccount(removeConfirmAccount.id)}
+                  disabled={saving}
+                >
+                  Si, quitar cuenta
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {supportChoiceAccount && (
         <div className={styles.modalOverlay}>
           <div className={styles.modalCard}>
@@ -4013,18 +4064,24 @@ export default function PanelPage() {
               </button>
             </div>
             <div className={styles.formStack}>
-              <input
-                className={styles.input}
-                placeholder='Asunto'
-                value={issueForm.subject}
-                onChange={event => setIssueForm(current => ({ ...current, subject: event.target.value }))}
-              />
-              <textarea
-                className={styles.textarea}
-                placeholder='Descripcion'
-                value={issueForm.description}
-                onChange={event => setIssueForm(current => ({ ...current, description: event.target.value }))}
-              />
+              <label className={styles.fieldLabel}>
+                <span>Asunto del problema</span>
+                <input
+                  className={styles.input}
+                  placeholder='Ejemplo: no ingresa la contrasena'
+                  value={issueForm.subject}
+                  onChange={event => setIssueForm(current => ({ ...current, subject: event.target.value }))}
+                />
+              </label>
+              <label className={styles.fieldLabel}>
+                <span>Descripcion para soporte</span>
+                <textarea
+                  className={styles.textarea}
+                  placeholder='Explica que pasa, desde cuando y que mensaje te aparece.'
+                  value={issueForm.description}
+                  onChange={event => setIssueForm(current => ({ ...current, description: event.target.value }))}
+                />
+              </label>
               <button type='button' className={styles.primaryButton} onClick={() => void submitSupportIssue()}>
                 Enviar a soporte
               </button>
@@ -4049,13 +4106,16 @@ export default function PanelPage() {
               <div className={styles.priceBox}>
                 Precio de renovacion: <strong>{formatMoney(renewalAccount.renewalPrice)}</strong>
               </div>
-              <label className={styles.fileButton}>
-                Adjuntar captura del pago
-                <input
-                  type='file'
-                  accept='image/*'
-                  onChange={event => void handleFileChange(event, setRenewalProofDataUrl)}
-                />
+              <label className={styles.fieldLabel}>
+                <span>Comprobante de pago</span>
+                <span className={styles.fileButton}>
+                  Adjuntar captura del pago
+                  <input
+                    type='file'
+                    accept='image/*'
+                    onChange={event => void handleFileChange(event, setRenewalProofDataUrl)}
+                  />
+                </span>
               </label>
               {renewalProofDataUrl && (
                 <img className={styles.previewImage} src={renewalProofDataUrl} alt='Captura de pago' />
@@ -4084,13 +4144,16 @@ export default function PanelPage() {
               <div className={styles.priceBox}>
                 Precio final: <strong>{formatMoney(buyProduct.effectivePrice)}</strong>
               </div>
-              <label className={styles.fileButton}>
-                Adjuntar captura del pago
-                <input
-                  type='file'
-                  accept='image/*'
-                  onChange={event => void handleFileChange(event, setPurchaseProofDataUrl)}
-                />
+              <label className={styles.fieldLabel}>
+                <span>Comprobante de compra</span>
+                <span className={styles.fileButton}>
+                  Adjuntar captura del pago
+                  <input
+                    type='file'
+                    accept='image/*'
+                    onChange={event => void handleFileChange(event, setPurchaseProofDataUrl)}
+                  />
+                </span>
               </label>
               {purchaseProofDataUrl && (
                 <img className={styles.previewImage} src={purchaseProofDataUrl} alt='Comprobante de compra' />
@@ -4129,21 +4192,27 @@ export default function PanelPage() {
                   : 'Solo crea el nombre. Luego esa persona entra a /subcliente, completa telefono, contrasena y su codigo de 4 digitos.'}
               </div>
               {panelRole === 'owner' ? (
-                <textarea
-                  className={styles.textarea}
-                  placeholder={'Nombre de usuario o masivo\nusuario1,usuario2,usuario3'}
-                  value={pendingUsername}
-                  onChange={event => setPendingUsername(event.target.value)}
-                  autoFocus
-                />
+                <label className={styles.fieldLabel}>
+                  <span>Usuarios a crear</span>
+                  <textarea
+                    className={styles.textarea}
+                    placeholder={'Uno o varios usuarios\nusuario1,usuario2,usuario3'}
+                    value={pendingUsername}
+                    onChange={event => setPendingUsername(event.target.value)}
+                    autoFocus
+                  />
+                </label>
               ) : (
-                <input
-                  className={styles.input}
-                  placeholder='Nombre de usuario'
-                  value={pendingUsername}
-                  onChange={event => setPendingUsername(event.target.value)}
-                  autoFocus
-                />
+                <label className={styles.fieldLabel}>
+                  <span>Nombre del subcliente</span>
+                  <input
+                    className={styles.input}
+                    placeholder='Ejemplo: cliente123'
+                    value={pendingUsername}
+                    onChange={event => setPendingUsername(event.target.value)}
+                    autoFocus
+                  />
+                </label>
               )}
               <button
                 type='button'
@@ -4205,21 +4274,24 @@ export default function PanelPage() {
               ) : (
                 <div className={styles.assignLookup}>
                   <div className={styles.assignSearchRow}>
-                    <input
-                      className={styles.input}
-                      placeholder='Buscar subcliente'
-                      value={childAssignSearch}
-                      onChange={event => {
-                        setChildAssignSearch(event.target.value)
-                        setChildAssignPickerOpen(false)
-                      }}
-                      onKeyDown={event => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          setChildAssignPickerOpen(true)
-                        }
-                      }}
-                    />
+                    <label className={styles.fieldLabel}>
+                      <span>Buscar subcliente</span>
+                      <input
+                        className={styles.input}
+                        placeholder='Escribe el nombre y pulsa buscar'
+                        value={childAssignSearch}
+                        onChange={event => {
+                          setChildAssignSearch(event.target.value)
+                          setChildAssignPickerOpen(false)
+                        }}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            setChildAssignPickerOpen(true)
+                          }
+                        }}
+                      />
+                    </label>
                     <button
                       type='button'
                       className={styles.secondaryButton}
@@ -4369,40 +4441,43 @@ export default function PanelPage() {
                 )}
                 {(!selectedAssignUser || assignHasInlineUsers) && (
                   <div className={styles.assignSearchRow}>
-                    <input
-                      className={styles.input}
-                      placeholder={
-                        assignHasInlineUsers
-                          ? 'Usuario por linea activado en asignacion masiva'
-                          : 'Buscar usuario por nombre'
-                      }
-                      value={assignSearch}
-                      disabled={assignHasInlineUsers}
-                      onChange={event => {
-                        setAssignSearch(event.target.value)
-                        setAssignPickerOpen(true)
-                      }}
-                      onFocus={() => {
-                        if (!assignHasInlineUsers) {
-                          setAssignPickerOpen(true)
+                    <label className={styles.fieldLabel}>
+                      <span>Usuario que recibira la cuenta</span>
+                      <input
+                        className={styles.input}
+                        placeholder={
+                          assignHasInlineUsers
+                            ? 'Usuario por linea activado en asignacion masiva'
+                            : 'Buscar usuario por nombre'
                         }
-                      }}
-                      onClick={() => {
-                        if (!assignHasInlineUsers) {
+                        value={assignSearch}
+                        disabled={assignHasInlineUsers}
+                        onChange={event => {
+                          setAssignSearch(event.target.value)
                           setAssignPickerOpen(true)
-                        }
-                      }}
-                      onKeyDown={event => {
-                        if (event.key === 'Enter' && !assignHasInlineUsers) {
-                          event.preventDefault()
-                          setAssignPickerOpen(true)
-                        }
+                        }}
+                        onFocus={() => {
+                          if (!assignHasInlineUsers) {
+                            setAssignPickerOpen(true)
+                          }
+                        }}
+                        onClick={() => {
+                          if (!assignHasInlineUsers) {
+                            setAssignPickerOpen(true)
+                          }
+                        }}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' && !assignHasInlineUsers) {
+                            event.preventDefault()
+                            setAssignPickerOpen(true)
+                          }
 
-                        if (event.key === 'Escape') {
-                          setAssignPickerOpen(false)
-                        }
-                      }}
-                    />
+                          if (event.key === 'Escape') {
+                            setAssignPickerOpen(false)
+                          }
+                        }}
+                      />
+                    </label>
                     <button
                       type='button'
                       className={styles.secondaryButton}
@@ -4438,18 +4513,24 @@ export default function PanelPage() {
                 )}
               </div>
               <div className={styles.formGrid}>
-                <input
-                  className={styles.input}
-                  placeholder='Servicio'
-                  value={assignForm.serviceName}
-                  onChange={event => setAssignForm(current => ({ ...current, serviceName: event.target.value }))}
-                />
-                <input
-                  className={styles.input}
-                  placeholder='Tipo'
-                  value={assignForm.accountType}
-                  onChange={event => setAssignForm(current => ({ ...current, accountType: event.target.value }))}
-                />
+                <label className={styles.fieldLabel}>
+                  <span>Servicio</span>
+                  <input
+                    className={styles.input}
+                    placeholder='Ejemplo: Netflix'
+                    value={assignForm.serviceName}
+                    onChange={event => setAssignForm(current => ({ ...current, serviceName: event.target.value }))}
+                  />
+                </label>
+                <label className={styles.fieldLabel}>
+                  <span>Tipo de cuenta</span>
+                  <input
+                    className={styles.input}
+                    placeholder='Ejemplo: Cuenta completa'
+                    value={assignForm.accountType}
+                    onChange={event => setAssignForm(current => ({ ...current, accountType: event.target.value }))}
+                  />
+                </label>
                 <label className={styles.fieldLabel}>
                   <span>Fecha de corte</span>
                   <input
@@ -4460,25 +4541,31 @@ export default function PanelPage() {
                     onChange={event => setAssignForm(current => ({ ...current, cutoffDate: event.target.value }))}
                   />
                 </label>
-                <input
-                  className={styles.input}
-                  placeholder='Precio de renovacion'
-                  value={assignForm.renewalPrice}
-                  inputMode='decimal'
-                  onChange={event =>
-                    setAssignForm(current => ({
-                      ...current,
-                      renewalPrice: sanitizeNumericInput(event.target.value),
-                    }))
-                  }
-                />
+                <label className={styles.fieldLabel}>
+                  <span>Precio de renovacion</span>
+                  <input
+                    className={styles.input}
+                    placeholder='Solo numero, ejemplo: 65'
+                    value={assignForm.renewalPrice}
+                    inputMode='decimal'
+                    onChange={event =>
+                      setAssignForm(current => ({
+                        ...current,
+                        renewalPrice: sanitizeNumericInput(event.target.value),
+                      }))
+                    }
+                  />
+                </label>
               </div>
-              <textarea
-                className={styles.textarea}
-                placeholder={'Correos, uno por linea\ncorreo@dominio.com\ncorreo1,correo2|12/02/2026\ncorreo1,correo2|12/03/2026|usuario'}
-                value={assignForm.emailsText}
-                onChange={event => setAssignForm(current => ({ ...current, emailsText: event.target.value }))}
-              />
+              <label className={styles.fieldLabel}>
+                <span>Correos a asignar</span>
+                <textarea
+                  className={styles.textarea}
+                  placeholder={'Uno por linea o masivo con fecha/usuario\ncorreo@dominio.com\ncorreo1,correo2|12/02/2026\ncorreo1,correo2|12/03/2026|usuario'}
+                  value={assignForm.emailsText}
+                  onChange={event => setAssignForm(current => ({ ...current, emailsText: event.target.value }))}
+                />
+              </label>
               <div className={styles.assignHint}>
                 {assignHasInlineData
                   ? 'Modo masivo detectado: la fecha de corte se toma de cada linea despues de |.'
@@ -4605,27 +4692,36 @@ export default function PanelPage() {
               </button>
             </div>
             <div className={styles.formStack}>
-              <input
-                className={styles.input}
-                placeholder='Servicio'
-                value={editAccountForm.serviceName}
-                disabled={!canEditAccountIdentity}
-                onChange={event => setEditAccountForm(current => ({ ...current, serviceName: event.target.value }))}
-              />
-              <input
-                className={styles.input}
-                placeholder='Correo'
-                value={editAccountForm.accountEmail}
-                disabled={!canEditAccountIdentity}
-                onChange={event => setEditAccountForm(current => ({ ...current, accountEmail: event.target.value }))}
-              />
-              <input
-                className={styles.input}
-                placeholder='Tipo'
-                value={editAccountForm.accountType}
-                disabled={!canEditAccountIdentity}
-                onChange={event => setEditAccountForm(current => ({ ...current, accountType: event.target.value }))}
-              />
+              <label className={styles.fieldLabel}>
+                <span>Servicio</span>
+                <input
+                  className={styles.input}
+                  placeholder='Ejemplo: Netflix'
+                  value={editAccountForm.serviceName}
+                  disabled={!canEditAccountIdentity}
+                  onChange={event => setEditAccountForm(current => ({ ...current, serviceName: event.target.value }))}
+                />
+              </label>
+              <label className={styles.fieldLabel}>
+                <span>Correo de la cuenta</span>
+                <input
+                  className={styles.input}
+                  placeholder='correo@dominio.com'
+                  value={editAccountForm.accountEmail}
+                  disabled={!canEditAccountIdentity}
+                  onChange={event => setEditAccountForm(current => ({ ...current, accountEmail: event.target.value }))}
+                />
+              </label>
+              <label className={styles.fieldLabel}>
+                <span>Tipo de cuenta</span>
+                <input
+                  className={styles.input}
+                  placeholder='Ejemplo: Cuenta completa'
+                  value={editAccountForm.accountType}
+                  disabled={!canEditAccountIdentity}
+                  onChange={event => setEditAccountForm(current => ({ ...current, accountType: event.target.value }))}
+                />
+              </label>
               <label className={styles.fieldLabel}>
                 <span>Fecha de corte</span>
                 <input
@@ -4635,40 +4731,49 @@ export default function PanelPage() {
                   onChange={event => setEditAccountForm(current => ({ ...current, cutoffDate: event.target.value }))}
                 />
               </label>
-              <input
-                className={styles.input}
-                placeholder='Precio de renovacion'
-                value={editAccountForm.renewalPrice}
-                inputMode='decimal'
-                onChange={event =>
-                  setEditAccountForm(current => ({
-                    ...current,
-                    renewalPrice: sanitizeNumericInput(event.target.value),
-                  }))
-                }
-              />
-              <input
-                className={styles.input}
-                placeholder='Dias de renovacion'
-                value={editAccountForm.renewalPeriodDays}
-                inputMode='numeric'
-                onChange={event =>
-                  setEditAccountForm(current => ({
-                    ...current,
-                    renewalPeriodDays: event.target.value.replace(/\D/g, ''),
-                  }))
-                }
-              />
-              <select
-                className={styles.input}
-                value={editAccountForm.status}
-                onChange={event => setEditAccountForm(current => ({ ...current, status: event.target.value }))}
-              >
-                <option value='activa'>Activa</option>
-                <option value='pausada'>Pausada</option>
-                <option value='sin_pago'>Sin pago</option>
-                <option value='desactivada'>Desactivada</option>
-              </select>
+              <label className={styles.fieldLabel}>
+                <span>Precio de renovacion</span>
+                <input
+                  className={styles.input}
+                  placeholder='Solo numero, ejemplo: 65'
+                  value={editAccountForm.renewalPrice}
+                  inputMode='decimal'
+                  onChange={event =>
+                    setEditAccountForm(current => ({
+                      ...current,
+                      renewalPrice: sanitizeNumericInput(event.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <label className={styles.fieldLabel}>
+                <span>Dias que cubre la renovacion</span>
+                <input
+                  className={styles.input}
+                  placeholder='Ejemplo: 30'
+                  value={editAccountForm.renewalPeriodDays}
+                  inputMode='numeric'
+                  onChange={event =>
+                    setEditAccountForm(current => ({
+                      ...current,
+                      renewalPeriodDays: event.target.value.replace(/\D/g, ''),
+                    }))
+                  }
+                />
+              </label>
+              <label className={styles.fieldLabel}>
+                <span>Estado de la cuenta</span>
+                <select
+                  className={styles.input}
+                  value={editAccountForm.status}
+                  onChange={event => setEditAccountForm(current => ({ ...current, status: event.target.value }))}
+                >
+                  <option value='activa'>Activa</option>
+                  <option value='pausada'>Pausada</option>
+                  <option value='sin_pago'>Sin pago</option>
+                  <option value='desactivada'>Desactivada</option>
+                </select>
+              </label>
               <div className={styles.assignHint}>
                 {canEditAccountIdentity
                   ? 'Este cambio se aplica a la cuenta principal y a todos sus subclientes.'
@@ -4702,28 +4807,34 @@ export default function PanelPage() {
 
             <div className={styles.formStack}>
               <div className={styles.formGrid}>
-                <input
-                  className={styles.input}
-                  placeholder='Titulo'
-                  value={productForm.title}
-                  onChange={event => setProductForm(current => ({ ...current, title: event.target.value }))}
-                />
+                <label className={styles.fieldLabel}>
+                  <span>Titulo del producto</span>
+                  <input
+                    className={styles.input}
+                    placeholder='Ejemplo: Netflix x 2 meses'
+                    value={productForm.title}
+                    onChange={event => setProductForm(current => ({ ...current, title: event.target.value }))}
+                  />
+                </label>
                 <div className={styles.switchRow}>
                   <span>Proveedor</span>
                   <strong>{profile?.username || productForm.providerName || 'owner'}</strong>
                 </div>
-                <input
-                  className={styles.input}
-                  placeholder='Precio'
-                  value={productForm.price}
-                  inputMode='decimal'
-                  onChange={event =>
-                    setProductForm(current => ({
-                      ...current,
-                      price: sanitizeNumericInput(event.target.value),
-                    }))
-                  }
-                />
+                <label className={styles.fieldLabel}>
+                  <span>Precio general</span>
+                  <input
+                    className={styles.input}
+                    placeholder='Solo numero, ejemplo: 70'
+                    value={productForm.price}
+                    inputMode='decimal'
+                    onChange={event =>
+                      setProductForm(current => ({
+                        ...current,
+                        price: sanitizeNumericInput(event.target.value),
+                      }))
+                    }
+                  />
+                </label>
                 <label className={styles.switchRow}>
                   <span>En stock</span>
                   <input
@@ -4736,17 +4847,20 @@ export default function PanelPage() {
                 </label>
               </div>
 
-              <label className={styles.fileButton}>
-                Subir imagen del producto
-                <input
-                  type='file'
-                  accept='image/*'
-                  onChange={event =>
-                    void handleFileChange(event, value =>
-                      setProductForm(current => ({ ...current, imageDataUrl: value }))
-                    )
-                  }
-                />
+              <label className={styles.fieldLabel}>
+                <span>Imagen del producto</span>
+                <span className={styles.fileButton}>
+                  Subir imagen del producto
+                  <input
+                    type='file'
+                    accept='image/*'
+                    onChange={event =>
+                      void handleFileChange(event, value =>
+                        setProductForm(current => ({ ...current, imageDataUrl: value }))
+                      )
+                    }
+                  />
+                </span>
               </label>
               {productForm.imageDataUrl && (
                 <img className={styles.previewImage} src={productForm.imageDataUrl} alt='Producto' />
@@ -4759,12 +4873,15 @@ export default function PanelPage() {
                     <h3>Asignar por usuario</h3>
                   </div>
                 </div>
-                <input
-                  className={styles.input}
-                  placeholder='Buscar usuario'
-                  value={productForm.search}
-                  onChange={event => setProductForm(current => ({ ...current, search: event.target.value }))}
-                />
+                <label className={styles.fieldLabel}>
+                  <span>Buscar usuario para precio especial</span>
+                  <input
+                    className={styles.input}
+                    placeholder='Escribe el nombre del usuario'
+                    value={productForm.search}
+                    onChange={event => setProductForm(current => ({ ...current, search: event.target.value }))}
+                  />
+                </label>
                 <div className={styles.searchPicker}>
                   {getPageItems('product-special-users', productSpecialUsers).map(user => (
                       <button
@@ -4786,18 +4903,21 @@ export default function PanelPage() {
                 </div>
                 {renderPagination('product-special-users', productSpecialUsers.length)}
                 <div className={styles.inlineActions}>
-                  <input
-                    className={styles.input}
-                    placeholder='Precio especial'
-                    value={productForm.pendingSpecialPrice}
-                    inputMode='decimal'
-                    onChange={event =>
-                      setProductForm(current => ({
-                        ...current,
-                        pendingSpecialPrice: sanitizeNumericInput(event.target.value),
-                      }))
-                    }
-                  />
+                  <label className={styles.fieldLabel}>
+                    <span>Precio especial</span>
+                    <input
+                      className={styles.input}
+                      placeholder='Solo numero'
+                      value={productForm.pendingSpecialPrice}
+                      inputMode='decimal'
+                      onChange={event =>
+                        setProductForm(current => ({
+                          ...current,
+                          pendingSpecialPrice: sanitizeNumericInput(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
                   <button type='button' className={styles.secondaryButton} onClick={addSpecialPriceRow}>
                     Agregar precio
                   </button>

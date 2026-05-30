@@ -130,13 +130,16 @@ export default function ClientesPage() {
         <section className={styles.searchCard}>
           <strong>Buscar correo</strong>
           <div className={styles.searchRow}>
-            <input
-              className={styles.input}
-              type='text'
-              value={recipientInput}
-              onChange={event => setRecipientInput(event.target.value)}
-              placeholder='cliente@correo.com'
-            />
+            <label className={styles.searchField}>
+              <span>Correo del cliente</span>
+              <input
+                className={styles.input}
+                type='text'
+                value={recipientInput}
+                onChange={event => setRecipientInput(event.target.value)}
+                placeholder='cliente@correo.com'
+              />
+            </label>
             <button
               type='button'
               className={styles.button}

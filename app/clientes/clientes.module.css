@@ -72,6 +72,19 @@
   gap: 12px;
 }
 
+.searchField {
+  display: grid;
+  gap: 7px;
+}
+
+.searchField span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .input,
 .button,
 .toggle,
