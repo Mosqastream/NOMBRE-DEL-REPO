@@ -4282,12 +4282,18 @@ export default function PanelPage() {
                         value={childAssignSearch}
                         onChange={event => {
                           setChildAssignSearch(event.target.value)
-                          setChildAssignPickerOpen(false)
+                          setChildAssignPickerOpen(true)
                         }}
+                        onFocus={() => setChildAssignPickerOpen(true)}
+                        onClick={() => setChildAssignPickerOpen(true)}
                         onKeyDown={event => {
                           if (event.key === 'Enter') {
                             event.preventDefault()
                             setChildAssignPickerOpen(true)
+                          }
+
+                          if (event.key === 'Escape') {
+                            setChildAssignPickerOpen(false)
                           }
                         }}
                       />
