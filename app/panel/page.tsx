@@ -1342,6 +1342,12 @@ export default function PanelPage() {
 
   const submitRenewal = async () => {
     if (!renewalAccount) return
+    if (isSubclientProfile) {
+      setRenewalAccount(null)
+      setRenewalProofDataUrl(null)
+      setError('Los subclientes no pueden solicitar renovacion.')
+      return
+    }
     setSaving(true)
     setError('')
     try {
@@ -2290,13 +2296,15 @@ export default function PanelPage() {
                             >
                               Soporte
                             </button>
-                            <button
-                              type='button'
-                              className={styles.primaryButton}
-                              onClick={() => setRenewalAccount(account)}
-                            >
-                              Renovacion
-                            </button>
+                            {!isSubclientProfile && (
+                              <button
+                                type='button'
+                                className={styles.primaryButton}
+                                onClick={() => setRenewalAccount(account)}
+                              >
+                                Renovacion
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -2327,13 +2335,15 @@ export default function PanelPage() {
                       >
                         Soporte
                       </button>
-                      <button
-                        type='button'
-                        className={styles.primaryButton}
-                        onClick={() => setRenewalAccount(account)}
-                      >
-                        Renovacion
-                      </button>
+                      {!isSubclientProfile && (
+                        <button
+                          type='button'
+                          className={styles.primaryButton}
+                          onClick={() => setRenewalAccount(account)}
+                        >
+                          Renovacion
+                        </button>
+                      )}
                     </div>
                   </article>
                 ))}
@@ -4023,7 +4033,7 @@ export default function PanelPage() {
         </div>
       )}
 
-      {renewalAccount && (
+      {renewalAccount && !isSubclientProfile && (
         <div className={styles.modalOverlay}>
           <div className={styles.modalCard}>
             <div className={styles.modalHeader}>

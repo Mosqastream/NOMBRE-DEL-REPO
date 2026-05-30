@@ -1005,6 +1005,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'renewal') {
+      if (session.profile.parentId) {
+        throw new PanelApiError('Los subclientes no pueden solicitar renovacion.', 403)
+      }
+
       const paymentProofDataUrl = normalizeDataUrlImage(body.paymentProofDataUrl)
 
       await ensureNoActiveSupportRequest(account.id, session.profile.id, session.supabaseAdmin)
