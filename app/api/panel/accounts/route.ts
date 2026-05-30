@@ -598,6 +598,22 @@ export async function POST(request: NextRequest) {
         throw new PanelApiError('Ese subcliente ya tiene esa misma cuenta.', 409)
       }
 
+      const sharedEmailResp = await session.supabaseAdmin
+        .from('service_accounts')
+        .select('id')
+        .eq('assigned_by_id', session.profile.id)
+        .eq('account_email', sourceAccount.account_email || '')
+        .neq('assigned_user_id', targetUser.id)
+        .limit(1)
+
+      if (sharedEmailResp.error) {
+        throw new PanelApiError(sharedEmailResp.error.message, 500)
+      }
+
+      if ((sharedEmailResp.data || []).length > 0) {
+        throw new PanelApiError('Ese correo ya fue asignado a otro subcliente. No se puede repetir.', 409)
+      }
+
       const branchCountResp = await session.supabaseAdmin
         .from('service_accounts')
         .select('id', { count: 'exact', head: true })

@@ -568,6 +568,7 @@ export default function PanelPage() {
   const [childAssignAccountId, setChildAssignAccountId] = useState('')
   const [childAssignCutoffDate, setChildAssignCutoffDate] = useState('')
   const [childAssignSearch, setChildAssignSearch] = useState('')
+  const [childAssignAccountSearch, setChildAssignAccountSearch] = useState('')
   const [childAssignPickerOpen, setChildAssignPickerOpen] = useState(false)
   const [childAccountPickerOpen, setChildAccountPickerOpen] = useState(false)
   const [assignSearch, setAssignSearch] = useState('')
@@ -744,6 +745,17 @@ export default function PanelPage() {
     () => (panelData?.accounts || []).filter(account => account.assignedUserId === profile?.id),
     [panelData?.accounts, profile?.id]
   )
+
+  const childAssignableAccounts = useMemo(() => {
+    const term = childAssignAccountSearch.trim().toLowerCase()
+    if (!term) return ownPanelAccounts
+    return ownPanelAccounts.filter(account =>
+      [account.serviceName, account.accountEmail, account.accountType, account.ownerUsername]
+        .join(' ')
+        .toLowerCase()
+        .includes(term)
+    )
+  }, [childAssignAccountSearch, ownPanelAccounts])
 
   const selectedChildAssignAccount = useMemo(
     () => ownPanelAccounts.find(account => account.id === childAssignAccountId) || null,
@@ -1824,6 +1836,7 @@ export default function PanelPage() {
       setChildAssignAccountId('')
       setChildAssignCutoffDate('')
       setChildAssignSearch('')
+      setChildAssignAccountSearch('')
       setChildAssignPickerOpen(false)
       setChildAccountPickerOpen(false)
       setNotice(payload.message || 'Cuenta asignada al subcliente.')
@@ -4244,6 +4257,7 @@ export default function PanelPage() {
                   setChildAssignAccountId('')
                   setChildAssignCutoffDate('')
                   setChildAssignSearch('')
+                  setChildAssignAccountSearch('')
                   setChildAssignPickerOpen(false)
                   setChildAccountPickerOpen(false)
                 }}
@@ -4335,9 +4349,60 @@ export default function PanelPage() {
               <div className={styles.fieldLabel}>
                 <span>Cuenta a compartir</span>
                 <div className={styles.accountPicker}>
+                  {selectedChildAssignAccount ? (
+                    <div className={styles.selectedUserCard}>
+                      <div>
+                        <span className={styles.blockEyebrow}>Cuenta seleccionada</span>
+                        <strong>{selectedChildAssignAccount.serviceName}</strong>
+                        <small>{selectedChildAssignAccount.accountEmail}</small>
+                      </div>
+                      <button
+                        type='button'
+                        className={styles.ghostButton}
+                        onClick={() => {
+                          setChildAssignAccountId('')
+                          setChildAssignAccountSearch('')
+                          setChildAccountPickerOpen(true)
+                        }}
+                      >
+                        Cambiar
+                      </button>
+                    </div>
+                  ) : (
+                    <div className={styles.accountPickerSearchWrap}>
+                      <input
+                        className={styles.input}
+                        placeholder='Busca por servicio o correo'
+                        value={childAssignAccountSearch}
+                        onChange={event => {
+                          setChildAssignAccountSearch(event.target.value)
+                          setChildAccountPickerOpen(true)
+                        }}
+                        onFocus={() => setChildAccountPickerOpen(true)}
+                        onClick={() => setChildAccountPickerOpen(true)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            setChildAccountPickerOpen(true)
+                          }
+
+                          if (event.key === 'Escape') {
+                            setChildAccountPickerOpen(false)
+                          }
+                        }}
+                      />
+                      <button
+                        type='button'
+                        className={styles.accountPickerMiniButton}
+                        onClick={() => setChildAccountPickerOpen(current => !current)}
+                      >
+                        v
+                      </button>
+                    </div>
+                  )}
                   <button
                     type='button'
-                    className={styles.accountPickerButton}
+                    className={styles.accountPickerButtonHidden}
                     onClick={() => setChildAccountPickerOpen(current => !current)}
                   >
                     {selectedChildAssignAccount ? (
@@ -4353,10 +4418,10 @@ export default function PanelPage() {
 
                   {childAccountPickerOpen && (
                     <div className={styles.accountPickerMenu}>
-                      {ownPanelAccounts.length === 0 ? (
+                      {childAssignableAccounts.length === 0 ? (
                         <div className={styles.emptyInline}>No tienes cuentas para compartir.</div>
                       ) : (
-                        ownPanelAccounts.map(account => (
+                        childAssignableAccounts.map(account => (
                           <button
                             key={account.id}
                             type='button'
@@ -4367,6 +4432,7 @@ export default function PanelPage() {
                             }
                             onClick={() => {
                               setChildAssignAccountId(account.id)
+                              setChildAssignAccountSearch(account.accountEmail)
                               setChildAccountPickerOpen(false)
                             }}
                           >
