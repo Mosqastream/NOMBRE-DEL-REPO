@@ -91,15 +91,50 @@ function mapAssignedAccount(params: {
 }
 
 async function ensureNoActiveSupportRequest(
-  accountId: string,
-  requesterId: string,
-  supabaseAdmin: SupabaseAdminClient
+  params: {
+    account: AccountRow
+    requesterId: string
+    supabaseAdmin: SupabaseAdminClient
+  }
 ) {
-  const activeResp = await supabaseAdmin
-    .from('support_requests')
+  const rootAccountId = params.account.root_account_id || params.account.id
+  const accountIds = new Set<string>([params.account.id, rootAccountId])
+
+  const chainResp = await params.supabaseAdmin
+    .from('service_accounts')
     .select('id')
-    .eq('account_id', accountId)
-    .eq('requester_id', requesterId)
+    .eq('owner_id', params.account.owner_id)
+    .or(`id.eq.${rootAccountId},root_account_id.eq.${rootAccountId}`)
+
+  if (chainResp.error) {
+    throw new PanelApiError(chainResp.error.message, 500)
+  }
+
+  for (const row of (chainResp.data || []) as Array<{ id: string }>) {
+    accountIds.add(row.id)
+  }
+
+  if (params.account.account_email) {
+    const emailResp = await params.supabaseAdmin
+      .from('service_accounts')
+      .select('id')
+      .eq('owner_id', params.account.owner_id)
+      .eq('account_email', params.account.account_email)
+
+    if (emailResp.error) {
+      throw new PanelApiError(emailResp.error.message, 500)
+    }
+
+    for (const row of (emailResp.data || []) as Array<{ id: string }>) {
+      accountIds.add(row.id)
+    }
+  }
+
+  const activeResp = await params.supabaseAdmin
+    .from('support_requests')
+    .select('id, requester_id')
+    .in('account_id', [...accountIds])
+    .neq('status', 'cerrada')
     .limit(1)
     .maybeSingle()
 
@@ -107,10 +142,15 @@ async function ensureNoActiveSupportRequest(
     throw new PanelApiError(activeResp.error.message, 500)
   }
 
-  const existingRequest = (activeResp.data || null) as { id: string } | null
+  const existingRequest = (activeResp.data || null) as { id: string; requester_id: string } | null
 
   if (existingRequest?.id) {
-    throw new PanelApiError('Ya tienes una solicitud activa para esta cuenta.', 400)
+    const message =
+      existingRequest.requester_id === params.requesterId
+        ? 'Ya tienes un soporte activo para esta cuenta.'
+        : 'Esta cuenta ya tiene un soporte activo en tu cadena de clientes.'
+
+    throw new PanelApiError(message, 409)
   }
 }
 
@@ -903,7 +943,11 @@ export async function POST(request: NextRequest) {
         throw new PanelApiError('Ingresa la descripcion del problema.', 400)
       }
 
-      await ensureNoActiveSupportRequest(account.id, session.profile.id, session.supabaseAdmin)
+      await ensureNoActiveSupportRequest({
+        account,
+        requesterId: session.profile.id,
+        supabaseAdmin: session.supabaseAdmin,
+      })
 
       const insertResp = await session.supabaseAdmin
         .from('support_requests')
@@ -932,7 +976,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'support_no_payment') {
-      await ensureNoActiveSupportRequest(account.id, session.profile.id, session.supabaseAdmin)
+      await ensureNoActiveSupportRequest({
+        account,
+        requesterId: session.profile.id,
+        supabaseAdmin: session.supabaseAdmin,
+      })
 
       const insertResp = await session.supabaseAdmin
         .from('support_requests')
@@ -1029,7 +1077,11 @@ export async function POST(request: NextRequest) {
 
       const paymentProofDataUrl = normalizeDataUrlImage(body.paymentProofDataUrl)
 
-      await ensureNoActiveSupportRequest(account.id, session.profile.id, session.supabaseAdmin)
+      await ensureNoActiveSupportRequest({
+        account,
+        requesterId: session.profile.id,
+        supabaseAdmin: session.supabaseAdmin,
+      })
 
       const insertResp = await session.supabaseAdmin
         .from('support_requests')

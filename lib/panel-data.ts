@@ -133,6 +133,27 @@ function uniqueById<T extends { id: string }>(items: T[]) {
   })
 }
 
+function getDescendantProfileIds(profiles: ProfileMiniRow[], rootProfileId: string) {
+  const descendants = new Set<string>()
+  let changed = true
+
+  while (changed) {
+    changed = false
+
+    for (const profile of profiles) {
+      if (descendants.has(profile.id)) continue
+      const parentId = profile.parent_id || profile.created_by_id || null
+
+      if (parentId === rootProfileId || (parentId && descendants.has(parentId))) {
+        descendants.add(profile.id)
+        changed = true
+      }
+    }
+  }
+
+  return [...descendants]
+}
+
 const getDaysRemaining = (cutoffDate: string | null) => {
   if (!cutoffDate) return null
   const startOfToday = new Date()
@@ -298,6 +319,8 @@ export async function fetchPanelBootstrap(
 
   const profiles = (profilesResp.data || []) as ProfileMiniRow[]
   const profilesById = new Map(profiles.map(item => [item.id, item]))
+  const descendantProfileIds = getDescendantProfileIds(profiles, profile.id)
+  const visibleProfileIds = [profile.id, ...descendantProfileIds]
 
   const accountSelect =
     'id, owner_id, assigned_user_id, assigned_by_id, parent_account_id, root_account_id, assignment_depth, service_name, account_email, account_type, cutoff_date, renewal_price, renewal_period_days, status, created_at, updated_at'
@@ -336,12 +359,12 @@ export async function fetchPanelBootstrap(
   const visibleAccountsQuery =
     profile.role === 'owner'
       ? accountsQuery.or(`owner_id.eq.${profile.id},assigned_user_id.eq.${profile.id}`)
-      : accountsQuery.or(`assigned_user_id.eq.${profile.id},assigned_by_id.eq.${profile.id}`)
+      : accountsQuery.in('assigned_user_id', visibleProfileIds)
 
   const visibleRequestsQuery =
     profile.role === 'owner'
       ? requestsQuery.or(`owner_id.eq.${profile.id},requester_id.eq.${profile.id}`)
-      : requestsQuery.eq('requester_id', profile.id)
+      : requestsQuery.in('requester_id', visibleProfileIds)
 
   const visibleProductsQuery =
     profile.role === 'owner'
@@ -358,7 +381,7 @@ export async function fetchPanelBootstrap(
   const visibleHistoryQuery =
     profile.role === 'owner'
       ? historyQuery.or(`owner_id.eq.${profile.id},requester_id.eq.${profile.id}`)
-      : historyQuery.eq('requester_id', profile.id)
+      : historyQuery.in('requester_id', visibleProfileIds)
 
   const [accountsResp, requestsResp, productsResp, specialPricesResp, salesResp, historyResp] =
     await Promise.all([
@@ -462,7 +485,7 @@ export async function fetchPanelBootstrap(
           }
         })
       : profiles
-          .filter(item => item.parent_id === profile.id || item.created_by_id === profile.id)
+          .filter(item => descendantProfileIds.includes(item.id))
           .map(item => {
             const userAccounts = accounts.filter(account => account.assignedUserId === item.id)
             return {

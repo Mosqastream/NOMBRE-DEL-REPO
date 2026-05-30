@@ -675,10 +675,100 @@ export default function PanelPage() {
     [profile?.id, seenSupportMap, userSupportRequests]
   )
 
-  const userSupportAccountIds = useMemo(
-    () => new Set(userSupportRequests.map(request => request.accountId).filter(Boolean) as string[]),
-    [userSupportRequests]
+  const allKnownAccounts = useMemo(() => {
+    const accountMap = new Map<string, PanelAccount>()
+
+    for (const account of panelData?.accounts || []) {
+      accountMap.set(account.id, account)
+    }
+
+    for (const user of panelData?.allUsers || []) {
+      for (const account of user.accounts || []) {
+        accountMap.set(account.id, account)
+      }
+    }
+
+    return [...accountMap.values()]
+  }, [panelData?.accounts, panelData?.allUsers])
+
+  const accountById = useMemo(
+    () => new Map(allKnownAccounts.map(account => [account.id, account])),
+    [allKnownAccounts]
   )
+
+  const userById = useMemo(() => {
+    const map = new Map<string, { id: string; username: string; parentId: string | null }>()
+
+    if (profile) {
+      map.set(profile.id, {
+        id: profile.id,
+        username: profile.username,
+        parentId: profile.parentId,
+      })
+    }
+
+    for (const user of panelData?.allUsers || []) {
+      map.set(user.id, {
+        id: user.id,
+        username: user.username,
+        parentId: user.parentId,
+      })
+    }
+
+    return map
+  }, [panelData?.allUsers, profile])
+
+  const supportBlockedByAccountKey = useMemo(() => {
+    const blocked = new Map<string, string>()
+
+    for (const request of panelData?.supportRequests || []) {
+      const requestAccount = request.accountId ? accountById.get(request.accountId) : null
+      const normalizedRequestEmail = request.accountEmail?.trim().toLowerCase() || ''
+      const keys = [
+        requestAccount?.id,
+        requestAccount?.rootAccountId,
+        requestAccount?.accountEmail?.trim().toLowerCase(),
+        normalizedRequestEmail,
+      ].filter(Boolean) as string[]
+
+      const requester = userById.get(request.requesterId)
+      const requesterParentId = requester?.parentId || null
+      const requesterName = requester?.username ? ` ${requester.username}` : ''
+      const isDirectSubclient = requesterParentId === profile?.id
+      const isDescendant = (() => {
+        let currentParentId = requesterParentId
+        const visited = new Set<string>()
+
+        while (currentParentId && !visited.has(currentParentId)) {
+          if (currentParentId === profile?.id) return true
+          visited.add(currentParentId)
+          currentParentId = userById.get(currentParentId)?.parentId || null
+        }
+
+        return false
+      })()
+      const reason =
+        request.requesterId === profile?.id
+          ? 'Ya tienes un soporte activo para esta cuenta.'
+          : isDirectSubclient
+            ? `Tu subcliente${requesterName} envio un soporte para esta cuenta.`
+            : isDescendant
+              ? `El subcliente de tu subcliente${requesterName} envio un soporte para esta cuenta.`
+              : 'Esta cuenta ya tiene un soporte activo.'
+
+      for (const key of keys) {
+        if (!blocked.has(key)) blocked.set(key, reason)
+      }
+    }
+
+    return blocked
+  }, [accountById, panelData?.supportRequests, profile?.id, userById])
+
+  const getAccountSupportBlockReason = (account: PanelAccount) =>
+    supportBlockedByAccountKey.get(account.id) ||
+    (account.rootAccountId ? supportBlockedByAccountKey.get(account.rootAccountId) : '') ||
+    supportBlockedByAccountKey.get(account.accountEmail.trim().toLowerCase()) ||
+    ''
 
   const ownerProducts = useMemo(
     () =>
@@ -2226,7 +2316,7 @@ export default function PanelPage() {
         const days = getSafeDaysRemaining(account.daysRemaining)
         return days !== null && days <= 0
       }).length,
-      soporte: accounts.filter(account => userSupportAccountIds.has(account.id)).length,
+      soporte: accounts.filter(account => Boolean(getAccountSupportBlockReason(account))).length,
     }
     const filteredAccounts = accounts.filter(account => {
       const days = getSafeDaysRemaining(account.daysRemaining)
@@ -2234,12 +2324,31 @@ export default function PanelPage() {
       if (userAccountFilter === 'vigentes') return days !== null && days > 7
       if (userAccountFilter === 'por_vencer') return days !== null && days > 0 && days <= 7
       if (userAccountFilter === 'vencidas') return days !== null && days <= 0
-      if (userAccountFilter === 'soporte') return userSupportAccountIds.has(account.id)
+      if (userAccountFilter === 'soporte') return Boolean(getAccountSupportBlockReason(account))
 
       return true
     })
     const pageKey = `user-accounts-${userAccountFilter}`
     const pageAccounts = getPageItems(pageKey, filteredAccounts)
+    const renderSupportButton = (account: PanelAccount) => {
+      const supportBlockReason = getAccountSupportBlockReason(account)
+
+      return (
+        <span title={supportBlockReason || 'Abrir soporte'}>
+          <button
+            type='button'
+            className={styles.secondaryButton}
+            onClick={() => {
+              if (!supportBlockReason) setSupportChoiceAccount(account)
+            }}
+            disabled={Boolean(supportBlockReason)}
+            aria-label={supportBlockReason || 'Abrir soporte'}
+          >
+            Soporte
+          </button>
+        </span>
+      )
+    }
     const filterOptions: Array<{ id: UserAccountFilter; label: string; count: number }> = [
       { id: 'todos', label: 'Todos', count: accountCounts.todos },
       { id: 'vigentes', label: 'Vigentes', count: accountCounts.vigentes },
@@ -2304,13 +2413,7 @@ export default function PanelPage() {
                         <td>{renderStatusBadge(account.status)}</td>
                         <td>
                           <div className={styles.inlineActions}>
-                            <button
-                              type='button'
-                              className={styles.secondaryButton}
-                              onClick={() => setSupportChoiceAccount(account)}
-                            >
-                              Soporte
-                            </button>
+                            {renderSupportButton(account)}
                             {!isSubclientProfile && (
                               <button
                                 type='button'
@@ -2343,13 +2446,7 @@ export default function PanelPage() {
                       {renderDaysBadge(account.daysRemaining)}
                     </span>
                     <div className={styles.inlineActions}>
-                      <button
-                        type='button'
-                        className={styles.secondaryButton}
-                        onClick={() => setSupportChoiceAccount(account)}
-                      >
-                        Soporte
-                      </button>
+                      {renderSupportButton(account)}
                       {!isSubclientProfile && (
                         <button
                           type='button'
