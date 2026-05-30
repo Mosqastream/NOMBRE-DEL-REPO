@@ -380,7 +380,7 @@ export async function fetchPanelBootstrap(
 
   const visibleHistoryQuery =
     profile.role === 'owner'
-      ? historyQuery.or(`owner_id.eq.${profile.id},requester_id.eq.${profile.id}`)
+      ? historyQuery
       : historyQuery.in('requester_id', visibleProfileIds)
 
   const [accountsResp, requestsResp, productsResp, specialPricesResp, salesResp, historyResp] =

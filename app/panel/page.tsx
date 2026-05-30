@@ -635,9 +635,20 @@ export default function PanelPage() {
   const currentSection =
     visibleSections.find(section => section.id === activeSection) || visibleSections[0]
 
+  const descendantUserIds = useMemo(
+    () => new Set((panelData?.allUsers || []).map(user => user.id)),
+    [panelData?.allUsers]
+  )
+
+  const visibleRequesterIds = useMemo(() => {
+    const ids = new Set(descendantUserIds)
+    if (profile?.id) ids.add(profile.id)
+    return ids
+  }, [descendantUserIds, profile?.id])
+
   const userSupportRequests = useMemo(
-    () => (panelData?.supportRequests || []).filter(item => item.requesterId === profile?.id),
-    [panelData?.supportRequests, profile?.id]
+    () => (panelData?.supportRequests || []).filter(item => visibleRequesterIds.has(item.requesterId)),
+    [panelData?.supportRequests, visibleRequesterIds]
   )
 
   const ownerSupportRequests = useMemo(
@@ -649,9 +660,9 @@ export default function PanelPage() {
   const currentHistory = useMemo(
     () =>
       panelView === 'owner'
-        ? (panelData?.supportHistory || []).filter(item => item.ownerId === profile?.id)
-        : (panelData?.supportHistory || []).filter(item => item.requesterId === profile?.id),
-    [panelData?.supportHistory, panelView, profile?.id]
+        ? panelData?.supportHistory || []
+        : (panelData?.supportHistory || []).filter(item => visibleRequesterIds.has(item.requesterId)),
+    [panelData?.supportHistory, panelView, visibleRequesterIds]
   )
 
   const selectedRequest =

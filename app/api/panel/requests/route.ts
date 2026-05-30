@@ -27,6 +27,55 @@ type MessageRow = {
   created_at: string
 }
 
+type ProfileLinkRow = {
+  id: string
+  parent_id?: string | null
+  created_by_id?: string | null
+}
+
+function getDescendantProfileIds(profiles: ProfileLinkRow[], rootProfileId: string) {
+  const descendants = new Set<string>()
+  let changed = true
+
+  while (changed) {
+    changed = false
+
+    for (const profile of profiles) {
+      if (descendants.has(profile.id)) continue
+      const parentId = profile.parent_id || profile.created_by_id || null
+
+      if (parentId === rootProfileId || (parentId && descendants.has(parentId))) {
+        descendants.add(profile.id)
+        changed = true
+      }
+    }
+  }
+
+  return descendants
+}
+
+async function getRequesterTreeAccess(params: {
+  session: Awaited<ReturnType<typeof requirePanelSession>>
+  requesterId: string
+}) {
+  if (params.requesterId === params.session.profile.id) return true
+  if (params.session.profile.role === 'owner') return true
+
+  const profilesResp = await params.session.supabaseAdmin
+    .from('profiles')
+    .select('id, parent_id, created_by_id')
+    .range(0, 9999)
+
+  if (profilesResp.error) {
+    throw new PanelApiError(profilesResp.error.message, 500)
+  }
+
+  return getDescendantProfileIds(
+    (profilesResp.data || []) as ProfileLinkRow[],
+    params.session.profile.id
+  ).has(params.requesterId)
+}
+
 async function archiveAndDeleteRequest(
   session: Awaited<ReturnType<typeof requirePanelSession>>,
   requestRow: RequestRow
@@ -114,7 +163,8 @@ export async function POST(request: NextRequest) {
     const canAccess =
       currentRequest.requester_id === session.profile.id ||
       currentRequest.owner_id === session.profile.id ||
-      session.profile.role === 'owner'
+      session.profile.role === 'owner' ||
+      (await getRequesterTreeAccess({ session, requesterId: currentRequest.requester_id }))
 
     if (!canAccess) {
       throw new PanelApiError('No puedes acceder a esta solicitud.', 403)
@@ -324,7 +374,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'confirm_close') {
-      if (currentRequest.requester_id !== session.profile.id) {
+      const canConfirmClose =
+        session.profile.role !== 'owner' &&
+        (await getRequesterTreeAccess({ session, requesterId: currentRequest.requester_id }))
+
+      if (!canConfirmClose) {
         throw new PanelApiError('Solo el cliente puede confirmar el cierre.', 403)
       }
 
