@@ -480,7 +480,10 @@ function SectionIcon({ icon }: { icon: SectionIconName }) {
 
 const formatDate = (value: string | null) => {
   if (!value) return '-'
-  const parsed = new Date(value)
+  const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  const parsed = dateOnlyMatch
+    ? new Date(Number(dateOnlyMatch[1]), Number(dateOnlyMatch[2]) - 1, Number(dateOnlyMatch[3]))
+    : new Date(value)
   if (Number.isNaN(parsed.getTime())) return '-'
   return parsed.toLocaleDateString('es-PE', {
     day: '2-digit',

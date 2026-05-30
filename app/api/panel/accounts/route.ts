@@ -265,11 +265,18 @@ const findHeaderIndex = (headers: unknown[], candidates: string[]) => {
 
 const readStringCell = (value: unknown) => String(value || '').trim()
 
+const toDateOnlyString = (date: Date) =>
+  [
+    String(date.getFullYear()).padStart(4, '0'),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-')
+
 const parseExcelDate = (value: unknown) => {
   if (value === null || value === undefined || value === '') return null
 
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10)
+    return toDateOnlyString(value)
   }
 
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -290,7 +297,7 @@ const parseExcelDate = (value: unknown) => {
   }
 
   const parsed = new Date(raw)
-  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10)
+  if (!Number.isNaN(parsed.getTime())) return toDateOnlyString(parsed)
 
   return null
 }
