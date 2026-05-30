@@ -38,6 +38,11 @@ type SdnetpanelService = {
   name: string
 }
 
+type SdnetpanelAccount = {
+  id?: number | string | null
+  username?: string | null
+}
+
 type SdnetpanelSearchResponse = {
   body?: string | null
   created_at?: string | null
@@ -63,6 +68,18 @@ const normalizeText = (value: string | null | undefined) => (value || '').trim()
 const normalizeBaseUrl = (value: string | null | undefined) => normalizeText(value).replace(/\/+$/, '')
 const readString = (value: unknown) =>
   typeof value === 'string' ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : ''
+const normalizeEmail = (value: string) => normalizeText(value).toLowerCase()
+
+const normalizeGmailAddress = (value: string) => {
+  const email = normalizeEmail(value)
+  const [rawLocal, rawDomain] = email.split('@')
+  if (!rawLocal || !rawDomain) return email
+
+  const domain = rawDomain === 'googlemail.com' ? 'gmail.com' : rawDomain
+  const local = rawLocal.split('+')[0].replace(/\./g, '')
+
+  return `${local}@${domain}`
+}
 
 const toPositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number(value)
@@ -238,6 +255,124 @@ const readServices = async (params: { baseUrl: string; token: string }) => {
   return (await response.json()) as SdnetpanelService[]
 }
 
+const toAccountItems = (payload: unknown) => {
+  if (Array.isArray(payload)) return payload as SdnetpanelAccount[]
+  if (payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown[] }).data)) {
+    return (payload as { data: SdnetpanelAccount[] }).data
+  }
+  return []
+}
+
+const buildAccountSearchTerms = (recipient: string) => {
+  const email = normalizeEmail(recipient)
+  const [local, domain] = email.split('@')
+  const terms = new Set<string>([email])
+
+  if (!local || !domain) return Array.from(terms)
+
+  terms.add(local)
+  terms.add(local.replace(/\./g, ''))
+
+  const parts = local.split('.').filter(part => part.length >= 3)
+  for (const part of parts) {
+    terms.add(part)
+  }
+
+  for (let size = 2; size <= Math.min(parts.length, 4); size += 1) {
+    for (let index = 0; index <= parts.length - size; index += 1) {
+      terms.add(parts.slice(index, index + size).join('.'))
+    }
+  }
+
+  return Array.from(terms).filter(Boolean)
+}
+
+const getEditDistance = (left: string, right: string) => {
+  if (left === right) return 0
+  if (!left) return right.length
+  if (!right) return left.length
+
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index)
+  const current = Array.from({ length: right.length + 1 }, () => 0)
+
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    current[0] = leftIndex
+
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + cost
+      )
+    }
+
+    for (let index = 0; index < previous.length; index += 1) {
+      previous[index] = current[index]
+    }
+  }
+
+  return previous[right.length]
+}
+
+const scoreAccountCandidate = (candidate: string, recipient: string, termIndex: number) => {
+  const candidateEmail = normalizeEmail(candidate)
+  const recipientEmail = normalizeEmail(recipient)
+  if (candidateEmail === recipientEmail) return Number.MAX_SAFE_INTEGER
+
+  const [candidateLocal] = candidateEmail.split('@')
+  const [recipientLocal] = recipientEmail.split('@')
+  const distance = getEditDistance(candidateLocal || candidateEmail, recipientLocal || recipientEmail)
+
+  return 10_000 - distance * 100 - termIndex
+}
+
+const findCanonicalAccountUsername = async (params: {
+  baseUrl: string
+  recipient: string
+  token: string
+}) => {
+  const target = normalizeGmailAddress(params.recipient)
+  const seen = new Set<string>()
+  let bestMatch = ''
+  let bestScore = -Infinity
+  const terms = buildAccountSearchTerms(params.recipient)
+
+  for (const [termIndex, term] of terms.entries()) {
+    const response = await fetch(
+      `${params.baseUrl}/api/service-accounts?search=${encodeURIComponent(term)}&per_page=25`,
+      {
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${params.token}`,
+        },
+        cache: 'no-store',
+      }
+    )
+
+    if (!response.ok) continue
+
+    const payload = await response.json()
+    const accounts = toAccountItems(payload)
+
+    for (const account of accounts) {
+      const username = normalizeEmail(readString(account.username))
+      if (!username || seen.has(username)) continue
+      seen.add(username)
+
+      if (normalizeGmailAddress(username) === target) {
+        const score = scoreAccountCandidate(username, params.recipient, termIndex)
+        if (score > bestScore) {
+          bestMatch = username
+          bestScore = score
+        }
+      }
+    }
+  }
+
+  return bestMatch || normalizeEmail(params.recipient)
+}
+
 const findServiceForPlatform = (services: SdnetpanelService[], platform: CodePlatformKey) => {
   const targetName = SDNETPANEL_SERVICE_MAP[platform]
   if (!targetName) return null
@@ -357,6 +492,12 @@ const fetchConfigMessages = async (config: SdnetpanelConfig, params: { platform:
     return { messages: [] as SdnetpanelMessage[], totalScanned: 0, variantsScanned: [] as string[] }
   }
 
+  const recipient = await findCanonicalAccountUsername({
+    baseUrl: config.baseUrl,
+    recipient: params.recipient,
+    token,
+  })
+
   const messages: SdnetpanelMessage[] = []
   for (const func of functions) {
     try {
@@ -367,7 +508,7 @@ const fetchConfigMessages = async (config: SdnetpanelConfig, params: { platform:
         func,
         maxItems: config.maxItems,
         platform: params.platform,
-        recipient: params.recipient,
+        recipient,
         token,
       })
       messages.push(...result)
