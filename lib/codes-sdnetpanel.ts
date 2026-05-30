@@ -40,6 +40,12 @@ type SdnetpanelService = {
 
 type SdnetpanelAccount = {
   id?: number | string | null
+  current_owner?: {
+    id?: number | string | null
+  } | null
+  service_id?: number | string | null
+  type?: string | null
+  user_id?: number | string | null
   username?: string | null
 }
 
@@ -263,6 +269,15 @@ const toAccountItems = (payload: unknown) => {
   return []
 }
 
+const toObject = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+
+const readPayloadId = (payload: unknown) => {
+  const record = toObject(payload)
+  const data = toObject(record.data)
+  return readString(record.id) || readString(data.id)
+}
+
 const buildAccountSearchTerms = (recipient: string) => {
   const email = normalizeEmail(recipient)
   const [local, domain] = email.split('@')
@@ -327,14 +342,14 @@ const scoreAccountCandidate = (candidate: string, recipient: string, termIndex: 
   return 10_000 - distance * 100 - termIndex
 }
 
-const findCanonicalAccountUsername = async (params: {
+const findCanonicalAccount = async (params: {
   baseUrl: string
   recipient: string
   token: string
 }) => {
   const target = normalizeGmailAddress(params.recipient)
   const seen = new Set<string>()
-  let bestMatch = ''
+  let bestMatch: SdnetpanelAccount | null = null
   let bestScore = -Infinity
   const terms = buildAccountSearchTerms(params.recipient)
 
@@ -363,14 +378,23 @@ const findCanonicalAccountUsername = async (params: {
       if (normalizeGmailAddress(username) === target) {
         const score = scoreAccountCandidate(username, params.recipient, termIndex)
         if (score > bestScore) {
-          bestMatch = username
+          bestMatch = account
           bestScore = score
         }
       }
     }
   }
 
-  return bestMatch || normalizeEmail(params.recipient)
+  return bestMatch
+}
+
+const findCanonicalAccountUsername = async (params: {
+  baseUrl: string
+  recipient: string
+  token: string
+}) => {
+  const account = await findCanonicalAccount(params)
+  return normalizeEmail(readString(account?.username)) || normalizeEmail(params.recipient)
 }
 
 const findServiceForPlatform = (services: SdnetpanelService[], platform: CodePlatformKey) => {
@@ -568,5 +592,269 @@ export const fetchSdnetpanelMessages = async (params: {
     messages,
     totalScanned,
     variantsScanned,
+  }
+}
+
+const extractTextFromUnknown = (value: unknown): string => {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return value.map(extractTextFromUnknown).join('\n')
+  if (typeof value !== 'object') return ''
+
+  const record = value as Record<string, unknown>
+  return Object.entries(record)
+    .filter(([key]) => !['html', 'body_html'].includes(key.toLowerCase()))
+    .map(([, item]) => extractTextFromUnknown(item))
+    .filter(Boolean)
+    .join('\n')
+}
+
+const extractReplacementEmail = (text: string, previousEmail: string) => {
+  const previous = normalizeEmail(previousEmail)
+  const targetedPatterns = [
+    /cuenta\s+asignada\s+exitosamente[\s\S]{0,80}?cuenta\s*[:：]\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
+    /nueva\s+cuenta(?:\s+de\s+cambio\s+automatico)?\s*[:：]\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
+    /cuenta\s+de\s+cambio\s+automatico\s*[:：]\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
+    /reemplazo[\s\S]{0,80}?([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
+  ]
+
+  for (const pattern of targetedPatterns) {
+    const match = text.match(pattern)
+    const email = normalizeEmail(match?.[1] || '')
+    if (email && email !== previous) return email
+  }
+
+  return ''
+}
+
+const sdnetpanelJson = async (params: {
+  baseUrl: string
+  body?: Record<string, unknown>
+  method?: string
+  path: string
+  token: string
+}) => {
+  const response = await fetch(`${params.baseUrl}${params.path}`, {
+    method: params.method || 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${params.token}`,
+      ...(params.body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: params.body ? JSON.stringify(params.body) : undefined,
+    cache: 'no-store',
+  })
+
+  const text = await response.text()
+  const payload = text
+    ? (() => {
+        try {
+          return JSON.parse(text) as unknown
+        } catch {
+          return { message: text }
+        }
+      })()
+    : null
+
+  if (!response.ok) {
+    const message = normalizeText(readString(toObject(payload).message)) || `SDPanel devolvio estado ${response.status}.`
+    const error = new Error(message) as Error & { status?: number; payload?: unknown }
+    error.status = response.status
+    error.payload = payload
+    throw error
+  }
+
+  return payload
+}
+
+const readTicketDetail = async (params: { baseUrl: string; ticketId: string; token: string }) => {
+  if (!params.ticketId) return null
+  try {
+    return await sdnetpanelJson({
+      baseUrl: params.baseUrl,
+      path: `/api/support/tickets/${encodeURIComponent(params.ticketId)}`,
+      token: params.token,
+    })
+  } catch {
+    return null
+  }
+}
+
+const getTicketServiceAccount = (ticketDetail: unknown, fallback: SdnetpanelAccount) => {
+  const detail = toObject(ticketDetail)
+  const data = toObject(detail.data)
+  return (toObject(detail.service_account).id || toObject(detail.service_account).username
+    ? toObject(detail.service_account)
+    : toObject(data.service_account).id || toObject(data.service_account).username
+      ? toObject(data.service_account)
+      : fallback) as SdnetpanelAccount
+}
+
+const buildGuaranteePayload = (params: {
+  account: SdnetpanelAccount
+  ticketDetail: unknown
+  ticketId: string
+}) => {
+  const detail = toObject(params.ticketDetail)
+  const data = toObject(detail.data)
+  const serviceAccount = getTicketServiceAccount(params.ticketDetail, params.account)
+  const owner = toObject(serviceAccount.current_owner)
+  const userId =
+    readString(owner.id) ||
+    readString(serviceAccount.user_id) ||
+    readString(detail.user_id) ||
+    readString(data.user_id)
+
+  return {
+    account_id: readString(serviceAccount.id) || readString(params.account.id),
+    service_id: readString(serviceAccount.service_id) || readString(params.account.service_id),
+    ticket_id: params.ticketId,
+    type: readString(serviceAccount.type) || readString(params.account.type) || 'Cuenta completa',
+    user_id: userId,
+  }
+}
+
+export type SdnetpanelNoPaymentReplacementResult =
+  | {
+      status: 'replaced'
+      providerLabel: string
+      providerMessage: string
+      replacementEmail: string
+      sdnetpanelTicketId: string
+    }
+  | {
+      status: 'waiting'
+      providerLabel: string | null
+      providerMessage: string
+      sdnetpanelTicketId?: string
+    }
+
+export const resolveSdnetpanelNoPaymentReplacement = async (params: {
+  accountEmail: string
+}): Promise<SdnetpanelNoPaymentReplacementResult> => {
+  const configs = getConfig()
+  const previousEmail = normalizeEmail(params.accountEmail)
+
+  if (configs.length === 0) {
+    return {
+      status: 'waiting',
+      providerLabel: null,
+      providerMessage: 'No hay sesiones de SDPanel configuradas para buscar reemplazo.',
+    }
+  }
+
+  let lastMessage = 'No se encontro la cuenta en las sesiones configuradas de SDPanel.'
+
+  for (const config of configs) {
+    try {
+      const token = await login(config)
+      const account = await findCanonicalAccount({
+        baseUrl: config.baseUrl,
+        recipient: previousEmail,
+        token,
+      })
+
+      const accountUsername = normalizeEmail(readString(account?.username))
+      if (!account?.id || !accountUsername) continue
+
+      const ticketPayload = await sdnetpanelJson({
+        baseUrl: config.baseUrl,
+        method: 'POST',
+        path: '/api/support/tickets',
+        token,
+        body: {
+          category: 'Cuenta caida',
+          description: 'Quiero ingresar a la cuenta pero no tiene una suscripon activa',
+          title: 'La cuenta esta sin pago',
+          username: accountUsername,
+        },
+      })
+      const ticketId = readPayloadId(ticketPayload)
+      let ticketDetail = await readTicketDetail({ baseUrl: config.baseUrl, ticketId, token })
+
+      if (ticketId) {
+        await sdnetpanelJson({
+          baseUrl: config.baseUrl,
+          method: 'POST',
+          path: `/api/support/tickets/${encodeURIComponent(ticketId)}/messages`,
+          token,
+          body: {
+            message: 'Por favor, necesito un cambio de cuenta.',
+          },
+        }).catch(() => null)
+      }
+
+      const guaranteePayload = buildGuaranteePayload({
+        account,
+        ticketDetail,
+        ticketId,
+      })
+      const assignPayload =
+        guaranteePayload.account_id && guaranteePayload.service_id && guaranteePayload.ticket_id && guaranteePayload.user_id
+          ? await sdnetpanelJson({
+              baseUrl: config.baseUrl,
+              method: 'POST',
+              path: '/api/service-accounts/assign-guarantee',
+              token,
+              body: guaranteePayload,
+            }).catch(error => {
+              lastMessage = error instanceof Error ? error.message : 'SDPanel no pudo generar reemplazo.'
+              return null
+            })
+          : null
+
+      if (ticketId) {
+        await sdnetpanelJson({
+          baseUrl: config.baseUrl,
+          method: 'PUT',
+          path: `/api/support/tickets/${encodeURIComponent(ticketId)}/status`,
+          token,
+          body: {
+            ByPass: true,
+            status: 'En progreso',
+          },
+        }).catch(() => null)
+      }
+
+      ticketDetail = await readTicketDetail({ baseUrl: config.baseUrl, ticketId, token })
+      const combinedText = [extractTextFromUnknown(assignPayload), extractTextFromUnknown(ticketDetail)]
+        .filter(Boolean)
+        .join('\n')
+      const replacementEmail = extractReplacementEmail(combinedText, previousEmail)
+      if (replacementEmail) {
+        return {
+          status: 'replaced',
+          providerLabel: config.label,
+          providerMessage: combinedText.slice(0, 800) || `Cuenta asignada exitosamente. Cuenta: ${replacementEmail}`,
+          replacementEmail,
+          sdnetpanelTicketId: ticketId,
+        }
+      }
+
+      if (/no\s+hay\s+cuentas\s+disponibles/i.test(combinedText)) {
+        return {
+          status: 'waiting',
+          providerLabel: config.label,
+          providerMessage: 'No hay cuentas disponibles. Nuestro equipo de soporte se comunicara en breve.',
+          sdnetpanelTicketId: ticketId,
+        }
+      }
+
+      return {
+        status: 'waiting',
+        providerLabel: config.label,
+        providerMessage:
+          lastMessage || 'Ticket creado en SDPanel. En unos momentos el proveedor revisara el reemplazo.',
+        sdnetpanelTicketId: ticketId,
+      }
+    } catch (error) {
+      lastMessage = error instanceof Error ? error.message : 'SDPanel no pudo procesar esta sesion.'
+    }
+  }
+
+  return {
+    status: 'waiting',
+    providerLabel: null,
+    providerMessage: lastMessage || 'En unos momentos el proveedor le atendera.',
   }
 }

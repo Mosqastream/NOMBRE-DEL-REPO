@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { PanelApiError, requirePanelSession } from '@/lib/panel-auth'
 import type { PanelAccount, ServiceAccountStatus } from '@/lib/panel-types'
 import { normalizeUsername, validateUsername } from '@/lib/auth-identity'
+import { resolveSdnetpanelNoPaymentReplacement } from '@/lib/codes-sdnetpanel'
 import { normalizeDataUrlImage, parseMoney, parseNullableDate } from '@/lib/panel-utils'
 
 export const runtime = 'nodejs'
@@ -33,6 +34,8 @@ type ProfileMiniRow = {
   parent_id?: string | null
   created_by_id?: string | null
 }
+
+type SupabaseAdminClient = Awaited<ReturnType<typeof requirePanelSession>>['supabaseAdmin']
 
 type PreviewAssignment = {
   email: string
@@ -90,7 +93,7 @@ function mapAssignedAccount(params: {
 async function ensureNoActiveSupportRequest(
   accountId: string,
   requesterId: string,
-  supabaseAdmin: Awaited<ReturnType<typeof requirePanelSession>>['supabaseAdmin']
+  supabaseAdmin: SupabaseAdminClient
 ) {
   const activeResp = await supabaseAdmin
     .from('support_requests')
@@ -108,6 +111,86 @@ async function ensureNoActiveSupportRequest(
 
   if (existingRequest?.id) {
     throw new PanelApiError('Ya tienes una solicitud activa para esta cuenta.', 400)
+  }
+}
+
+async function replaceAccountEmailForChain(params: {
+  account: AccountRow
+  accountEmail: string
+  actorId: string
+  requestId: string
+  requesterId: string
+  supabaseAdmin: SupabaseAdminClient
+}) {
+  const rootAccountId = params.account.root_account_id || params.account.id
+  const now = new Date().toISOString()
+  const updateAccountResp = await params.supabaseAdmin
+    .from('service_accounts')
+    .update({
+      account_email: params.accountEmail,
+      updated_at: now,
+    } as never)
+    .eq('owner_id', params.account.owner_id)
+    .or(`id.eq.${rootAccountId},root_account_id.eq.${rootAccountId}`)
+    .select('id')
+
+  if (updateAccountResp.error) {
+    throw new PanelApiError(updateAccountResp.error.message, 500)
+  }
+
+  if ((updateAccountResp.data || []).length === 0) {
+    throw new PanelApiError('No se encontro la cuenta para reemplazar.', 404)
+  }
+
+  const messageResp = await params.supabaseAdmin.from('support_messages').insert({
+    request_id: params.requestId,
+    sender_id: params.account.owner_id,
+    sender_role: 'owner',
+    body: `Reemplazo automatico listo: ${params.accountEmail}`,
+  } as never)
+
+  if (messageResp.error) {
+    throw new PanelApiError(messageResp.error.message, 500)
+  }
+
+  const requesterResp = await params.supabaseAdmin
+    .from('profiles')
+    .select('id, username, parent_id')
+    .eq('id', params.requesterId)
+    .maybeSingle()
+
+  const requester = (requesterResp.data || null) as {
+    id: string
+    username?: string | null
+    parent_id?: string | null
+  } | null
+  const historyRequesterIds = Array.from(
+    new Set([params.requesterId, requester?.parent_id].filter(Boolean) as string[])
+  )
+
+  if (historyRequesterIds.length > 0) {
+    await params.supabaseAdmin.from('support_request_history').insert(
+      historyRequesterIds.map(requesterId => ({
+        account_email: params.accountEmail,
+        service_name: params.account.service_name || null,
+        requester_id: requesterId,
+        owner_id: params.account.owner_id,
+        request_kind: 'no_payment',
+        subject: 'Reemplazo automatico entregado',
+        description:
+          requester?.parent_id && requesterId === requester.parent_id
+            ? `Tu subcliente ${requester.username || 'subcliente'} abrio ticket por falta de pago y se le brindo reemplazo de la cuenta ${params.account.account_email || 'anterior'} por ${params.accountEmail}.`
+            : `Se brindo reemplazo automatico de la cuenta ${params.account.account_email || 'anterior'} por ${params.accountEmail}.`,
+        summary:
+          requester?.parent_id && requesterId === requester.parent_id
+            ? `Subcliente ${requester.username || 'subcliente'} recibio reemplazo: ${params.account.account_email || 'anterior'} -> ${params.accountEmail}`
+            : `Reemplazo automatico: ${params.account.account_email || 'anterior'} -> ${params.accountEmail}`,
+        message_count: 1,
+        last_message_preview: `Reemplazo automatico listo: ${params.accountEmail}`,
+        closed_by_id: params.actorId,
+        created_at: now,
+      })) as never
+    )
   }
 }
 
@@ -776,7 +859,9 @@ export async function POST(request: NextRequest) {
 
     const accountResp = await session.supabaseAdmin
       .from('service_accounts')
-      .select('id, owner_id, assigned_user_id, renewal_price')
+      .select(
+        'id, owner_id, assigned_user_id, root_account_id, service_name, account_email, account_type, renewal_price'
+      )
       .eq('id', accountId)
       .eq('assigned_user_id', session.profile.id)
       .maybeSingle()
@@ -852,9 +937,69 @@ export async function POST(request: NextRequest) {
       }
 
       const insertedRequest = (insertResp.data || null) as { id: string } | null
+      let responseMessage = 'Solicitud de pago reportada.'
+
+      if (insertedRequest?.id && account.account_email) {
+        try {
+          const autoReplacement = await resolveSdnetpanelNoPaymentReplacement({
+            accountEmail: account.account_email,
+          })
+
+          if (autoReplacement.status === 'replaced') {
+            await replaceAccountEmailForChain({
+              account,
+              accountEmail: autoReplacement.replacementEmail,
+              actorId: session.profile.id,
+              requestId: insertedRequest.id,
+              requesterId: session.profile.id,
+              supabaseAdmin: session.supabaseAdmin,
+            })
+
+            await session.supabaseAdmin
+              .from('support_requests')
+              .update({
+                status: 'cierre_solicitado',
+              } as never)
+              .eq('id', insertedRequest.id)
+
+            responseMessage = 'SDPanel entrego reemplazo automatico. Confirma el cierre cuando todo este conforme.'
+          } else {
+            const providerNote = autoReplacement.providerLabel ? ` (${autoReplacement.providerLabel})` : ''
+            await session.supabaseAdmin.from('support_messages').insert({
+              request_id: insertedRequest.id,
+              sender_id: account.owner_id,
+              sender_role: 'owner',
+              body: `${autoReplacement.providerMessage || 'En unos momentos el proveedor le atendera.'}${providerNote}`,
+            } as never)
+
+            await session.supabaseAdmin
+              .from('support_requests')
+              .update({
+                status: 'en_chat',
+              } as never)
+              .eq('id', insertedRequest.id)
+
+            responseMessage = 'Solicitud enviada. En unos momentos el proveedor le atendera.'
+          }
+        } catch {
+          await session.supabaseAdmin.from('support_messages').insert({
+            request_id: insertedRequest.id,
+            sender_id: account.owner_id,
+            sender_role: 'owner',
+            body: 'En unos momentos el proveedor le atendera.',
+          } as never)
+
+          await session.supabaseAdmin
+            .from('support_requests')
+            .update({
+              status: 'en_chat',
+            } as never)
+            .eq('id', insertedRequest.id)
+        }
+      }
 
       return NextResponse.json({
-        message: 'Solicitud de pago reportada.',
+        message: responseMessage,
         requestId: insertedRequest?.id || null,
       })
     }
