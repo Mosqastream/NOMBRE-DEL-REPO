@@ -980,12 +980,13 @@ export async function POST(request: NextRequest) {
 
             responseMessage = 'SDPanel entrego reemplazo automatico. Confirma el cierre cuando todo este conforme.'
           } else {
-            const providerNote = autoReplacement.providerLabel ? ` (${autoReplacement.providerLabel})` : ''
             await session.supabaseAdmin.from('support_messages').insert({
               request_id: insertedRequest.id,
               sender_id: account.owner_id,
               sender_role: 'owner',
-              body: `${autoReplacement.providerMessage || 'En unos momentos el proveedor le atendera.'}${providerNote}`,
+              body:
+                autoReplacement.providerMessage ||
+                'En unos momentos el proveedor te atendera. Por ahora estamos sin reemplazos disponibles, pero ya quedo reportado.',
             } as never)
 
             await session.supabaseAdmin
@@ -1002,7 +1003,8 @@ export async function POST(request: NextRequest) {
             request_id: insertedRequest.id,
             sender_id: account.owner_id,
             sender_role: 'owner',
-            body: 'En unos momentos el proveedor le atendera.',
+            body:
+              'En unos momentos el proveedor te atendera. Por ahora estamos sin reemplazos disponibles, pero ya quedo reportado.',
           } as never)
 
           await session.supabaseAdmin

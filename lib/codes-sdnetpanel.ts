@@ -739,11 +739,13 @@ export const resolveSdnetpanelNoPaymentReplacement = async (params: {
     return {
       status: 'waiting',
       providerLabel: null,
-      providerMessage: 'No hay sesiones de SDPanel configuradas para buscar reemplazo.',
+      providerMessage:
+        'En unos momentos el proveedor te atendera. Por ahora estamos sin reemplazos disponibles, pero ya quedo reportado.',
     }
   }
 
-  let lastMessage = 'No se encontro la cuenta en las sesiones configuradas de SDPanel.'
+  let lastMessage =
+    'En unos momentos el proveedor te atendera. Por ahora estamos sin reemplazos disponibles, pero ya quedo reportado.'
 
   for (const config of configs) {
     try {
@@ -797,8 +799,9 @@ export const resolveSdnetpanelNoPaymentReplacement = async (params: {
               path: '/api/service-accounts/assign-guarantee',
               token,
               body: guaranteePayload,
-            }).catch(error => {
-              lastMessage = error instanceof Error ? error.message : 'SDPanel no pudo generar reemplazo.'
+            }).catch(() => {
+              lastMessage =
+                'En unos momentos el proveedor te atendera. Por ahora estamos sin reemplazos disponibles, pero ya quedo reportado.'
               return null
             })
           : null
@@ -835,7 +838,8 @@ export const resolveSdnetpanelNoPaymentReplacement = async (params: {
         return {
           status: 'waiting',
           providerLabel: config.label,
-          providerMessage: 'No hay cuentas disponibles. Nuestro equipo de soporte se comunicara en breve.',
+          providerMessage:
+            'En unos momentos el proveedor te atendera. Por ahora estamos sin reemplazos disponibles, pero ya quedo reportado.',
           sdnetpanelTicketId: ticketId,
         }
       }
@@ -844,17 +848,21 @@ export const resolveSdnetpanelNoPaymentReplacement = async (params: {
         status: 'waiting',
         providerLabel: config.label,
         providerMessage:
-          lastMessage || 'Ticket creado en SDPanel. En unos momentos el proveedor revisara el reemplazo.',
+          lastMessage ||
+          'En unos momentos el proveedor te atendera. Por ahora estamos sin reemplazos disponibles, pero ya quedo reportado.',
         sdnetpanelTicketId: ticketId,
       }
-    } catch (error) {
-      lastMessage = error instanceof Error ? error.message : 'SDPanel no pudo procesar esta sesion.'
+    } catch {
+      lastMessage =
+        'En unos momentos el proveedor te atendera. Por ahora estamos sin reemplazos disponibles, pero ya quedo reportado.'
     }
   }
 
   return {
     status: 'waiting',
     providerLabel: null,
-    providerMessage: lastMessage || 'En unos momentos el proveedor le atendera.',
+    providerMessage:
+      lastMessage ||
+      'En unos momentos el proveedor te atendera. Por ahora estamos sin reemplazos disponibles, pero ya quedo reportado.',
   }
 }

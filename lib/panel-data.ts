@@ -168,12 +168,13 @@ function mapAccount(row: AccountRow, profilesById: Map<string, ProfileMiniRow>):
 }
 
 function mapMessage(row: MessageRow, profilesById: Map<string, ProfileMiniRow>): PanelSupportMessage {
+  const senderRole = row.sender_role === 'owner' ? 'owner' : 'usuario'
   return {
     id: row.id,
     requestId: row.request_id,
     senderId: row.sender_id,
-    senderUsername: profilesById.get(row.sender_id)?.username || 'usuario',
-    senderRole: row.sender_role === 'owner' ? 'owner' : 'usuario',
+    senderUsername: senderRole === 'owner' ? 'Sistema' : profilesById.get(row.sender_id)?.username || 'usuario',
+    senderRole,
     body: row.body,
     imageDataUrl: row.image_data_url,
     createdAt: row.created_at,
