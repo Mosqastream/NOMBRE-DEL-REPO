@@ -344,10 +344,11 @@ const scoreAccountCandidate = (candidate: string, recipient: string, termIndex: 
 
 const findCanonicalAccount = async (params: {
   baseUrl: string
+  exactEmail?: boolean
   recipient: string
   token: string
 }) => {
-  const target = normalizeGmailAddress(params.recipient)
+  const target = params.exactEmail ? normalizeEmail(params.recipient) : normalizeGmailAddress(params.recipient)
   const seen = new Set<string>()
   let bestMatch: SdnetpanelAccount | null = null
   let bestScore = -Infinity
@@ -375,7 +376,8 @@ const findCanonicalAccount = async (params: {
       if (!username || seen.has(username)) continue
       seen.add(username)
 
-      if (normalizeGmailAddress(username) === target) {
+      const candidate = params.exactEmail ? username : normalizeGmailAddress(username)
+      if (candidate === target) {
         const score = scoreAccountCandidate(username, params.recipient, termIndex)
         if (score > bestScore) {
           bestMatch = account
@@ -752,6 +754,7 @@ export const resolveSdnetpanelNoPaymentReplacement = async (params: {
       const token = await login(config)
       const account = await findCanonicalAccount({
         baseUrl: config.baseUrl,
+        exactEmail: true,
         recipient: previousEmail,
         token,
       })

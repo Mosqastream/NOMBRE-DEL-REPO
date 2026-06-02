@@ -158,12 +158,16 @@ async function replaceAccountEmailForChain(params: {
   account: AccountRow
   accountEmail: string
   actorId: string
+  providerLabel?: string | null
   requestId: string
   requesterId: string
+  sdnetpanelTicketId?: string | null
   supabaseAdmin: SupabaseAdminClient
 }) {
   const rootAccountId = params.account.root_account_id || params.account.id
   const now = new Date().toISOString()
+  const sourceLabel = params.providerLabel ? ` desde ${params.providerLabel}` : ''
+  const ticketLabel = params.sdnetpanelTicketId ? ` (ticket SDPanel #${params.sdnetpanelTicketId})` : ''
   const updateAccountResp = await params.supabaseAdmin
     .from('service_accounts')
     .update({
@@ -186,7 +190,7 @@ async function replaceAccountEmailForChain(params: {
     request_id: params.requestId,
     sender_id: params.account.owner_id,
     sender_role: 'owner',
-    body: `Reemplazo automatico listo: ${params.accountEmail}`,
+    body: `Sistema: reemplazo automatico listo${sourceLabel}: ${params.accountEmail}`,
   } as never)
 
   if (messageResp.error) {
@@ -219,14 +223,14 @@ async function replaceAccountEmailForChain(params: {
         subject: 'Reemplazo automatico entregado',
         description:
           requester?.parent_id && requesterId === requester.parent_id
-            ? `Tu subcliente ${requester.username || 'subcliente'} abrio ticket por falta de pago y se le brindo reemplazo de la cuenta ${params.account.account_email || 'anterior'} por ${params.accountEmail}.`
-            : `Se brindo reemplazo automatico de la cuenta ${params.account.account_email || 'anterior'} por ${params.accountEmail}.`,
+            ? `Tu subcliente ${requester.username || 'subcliente'} abrio ticket por falta de pago y se le brindo reemplazo de la cuenta ${params.account.account_email || 'anterior'} por ${params.accountEmail}${sourceLabel}${ticketLabel}.`
+            : `Se brindo reemplazo automatico de la cuenta ${params.account.account_email || 'anterior'} por ${params.accountEmail}${sourceLabel}${ticketLabel}.`,
         summary:
           requester?.parent_id && requesterId === requester.parent_id
-            ? `Subcliente ${requester.username || 'subcliente'} recibio reemplazo: ${params.account.account_email || 'anterior'} -> ${params.accountEmail}`
-            : `Reemplazo automatico: ${params.account.account_email || 'anterior'} -> ${params.accountEmail}`,
+            ? `Subcliente ${requester.username || 'subcliente'} recibio reemplazo${sourceLabel}: ${params.account.account_email || 'anterior'} -> ${params.accountEmail}`
+            : `Reemplazo automatico${sourceLabel}: ${params.account.account_email || 'anterior'} -> ${params.accountEmail}`,
         message_count: 1,
-        last_message_preview: `Reemplazo automatico listo: ${params.accountEmail}`,
+        last_message_preview: `Reemplazo automatico listo${sourceLabel}: ${params.accountEmail}`,
         closed_by_id: params.actorId,
         created_at: now,
       })) as never
@@ -1021,8 +1025,10 @@ export async function POST(request: NextRequest) {
               account,
               accountEmail: autoReplacement.replacementEmail,
               actorId: session.profile.id,
+              providerLabel: autoReplacement.providerLabel,
               requestId: insertedRequest.id,
               requesterId: session.profile.id,
+              sdnetpanelTicketId: autoReplacement.sdnetpanelTicketId,
               supabaseAdmin: session.supabaseAdmin,
             })
 
