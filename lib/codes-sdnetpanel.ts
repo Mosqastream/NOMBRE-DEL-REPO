@@ -750,6 +750,7 @@ export const resolveSdnetpanelNoPaymentReplacement = async (params: {
     'En unos momentos el proveedor te atendera. Por ahora estamos sin reemplazos disponibles, pero ya quedo reportado.'
 
   for (const config of configs) {
+    let foundOriginalAccount = false
     try {
       const token = await login(config)
       const account = await findCanonicalAccount({
@@ -761,6 +762,7 @@ export const resolveSdnetpanelNoPaymentReplacement = async (params: {
 
       const accountUsername = normalizeEmail(readString(account?.username))
       if (!account?.id || !accountUsername) continue
+      foundOriginalAccount = true
 
       const ticketPayload = await sdnetpanelJson({
         baseUrl: config.baseUrl,
@@ -858,6 +860,13 @@ export const resolveSdnetpanelNoPaymentReplacement = async (params: {
     } catch {
       lastMessage =
         'En unos momentos el proveedor te atendera. Por ahora estamos sin reemplazos disponibles, pero ya quedo reportado.'
+      if (foundOriginalAccount) {
+        return {
+          status: 'waiting',
+          providerLabel: config.label,
+          providerMessage: lastMessage,
+        }
+      }
     }
   }
 
