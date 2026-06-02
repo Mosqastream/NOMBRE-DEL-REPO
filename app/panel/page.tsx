@@ -512,6 +512,20 @@ const formatMoney = (value: number) =>
     minimumFractionDigits: 2,
   }).format(value)
 
+const getLocalDateOnly = () => {
+  const now = new Date()
+  return [
+    String(now.getFullYear()).padStart(4, '0'),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('-')
+}
+
+const getEmailDomain = (email: string) => {
+  const domain = email.split('@')[1]?.trim().toLowerCase()
+  return domain || ''
+}
+
 const getSafeDaysRemaining = (value: number | null) => {
   if (value === null || Number.isNaN(value)) return null
   return Math.max(0, value)
@@ -564,6 +578,7 @@ export default function PanelPage() {
   const [replacementEmail, setReplacementEmail] = useState('')
   const [buyProduct, setBuyProduct] = useState<PanelProduct | null>(null)
   const [assignOpen, setAssignOpen] = useState(false)
+  const [exportAccountsOpen, setExportAccountsOpen] = useState(false)
   const [productOpen, setProductOpen] = useState(false)
   const [pendingUserOpen, setPendingUserOpen] = useState(false)
   const [pendingUsername, setPendingUsername] = useState('')
@@ -1008,6 +1023,37 @@ export default function PanelPage() {
       return true
     })
   }, [expandedUserId, ownerAccountSearch, ownerAllAccounts, ownerAccountFilter, selectedOwnerUser])
+
+  const directOwnerExportAccounts = useMemo(
+    () =>
+      filteredOwnerAccounts
+        .filter(account => account.assignmentDepth === 0 && !account.parentAccountId)
+        .sort((left, right) => {
+          const clientSort = left.clientUsername.localeCompare(right.clientUsername, 'es', {
+            sensitivity: 'base',
+          })
+          if (clientSort !== 0) return clientSort
+          return left.accountEmail.localeCompare(right.accountEmail, 'es', { sensitivity: 'base' })
+        }),
+    [filteredOwnerAccounts]
+  )
+
+  const exportDomainOptions = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const account of directOwnerExportAccounts) {
+      const domain = getEmailDomain(account.accountEmail)
+      if (!domain) continue
+      counts.set(domain, (counts.get(domain) || 0) + 1)
+    }
+
+    return Array.from(counts.entries())
+      .map(([domain, count]) => ({ domain, count }))
+      .sort((left, right) => {
+        if (left.domain === 'cryxteam.com') return -1
+        if (right.domain === 'cryxteam.com') return 1
+        return left.domain.localeCompare(right.domain, 'es', { sensitivity: 'base' })
+      })
+  }, [directOwnerExportAccounts])
 
   useEffect(() => {
     let active = true
@@ -2026,23 +2072,51 @@ export default function PanelPage() {
     }
   }
 
-  const exportOwnerAccounts = async () => {
-    const rows = filteredOwnerAccounts.map(account => ({
-      Servicio: account.serviceName,
-      Cuenta: account.accountEmail,
-      Tipo: account.accountType,
-      Estado: account.status,
-      Cliente: account.clientUsername,
-      Propietario: account.ownerUsername,
-      Corte: account.cutoffDate || '',
-      Dias: getSafeDaysRemaining(account.daysRemaining) ?? '',
-    }))
+  const exportOwnerAccounts = async (domain: string) => {
+    const normalizedDomain = domain.trim().toLowerCase()
+    const today = getLocalDateOnly()
+    const accountsToExport = directOwnerExportAccounts
+      .filter(account => getEmailDomain(account.accountEmail) === normalizedDomain)
+      .sort((left, right) => {
+        const clientSort = left.clientUsername.localeCompare(right.clientUsername, 'es', {
+          sensitivity: 'base',
+        })
+        if (clientSort !== 0) return clientSort
+        return left.accountEmail.localeCompare(right.accountEmail, 'es', { sensitivity: 'base' })
+      })
+
+    if (accountsToExport.length === 0) {
+      setError('No hay cuentas directas del owner para ese dominio.')
+      return
+    }
+
+    const rows = accountsToExport.map(account => {
+      const daysRemaining = getSafeDaysRemaining(account.daysRemaining) ?? 0
+      const soldPrice = Number(account.renewalPrice || 0)
+      const coveredDays = Math.max(1, Number(account.renewalPeriodDays || 30))
+      const refundToday = Math.max(0, Number(((soldPrice / coveredDays) * daysRemaining).toFixed(2)))
+
+      return {
+        Servicio: account.serviceName,
+        Cuenta: account.accountEmail,
+        Tipo: account.accountType,
+        Estado: account.status,
+        Cliente: account.clientUsername,
+        Propietario: account.ownerUsername,
+        Corte: account.cutoffDate || '',
+        Dias: daysRemaining,
+        'Precio que lo vendiste': soldPrice,
+        'Reembolso que te toca dar a dia de hoy': refundToday,
+        'Fecha de hoy': today,
+      }
+    })
 
     const XLSX = await import('xlsx')
     const worksheet = XLSX.utils.json_to_sheet(rows)
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Cuentas')
-    XLSX.writeFile(workbook, `cuentas-owner-${new Date().toISOString().slice(0, 10)}.xlsx`)
+    XLSX.writeFile(workbook, `cuentas-owner-${normalizedDomain}-${today}.xlsx`)
+    setExportAccountsOpen(false)
   }
 
   const addSpecialPriceRow = () => {
@@ -3151,7 +3225,7 @@ export default function PanelPage() {
               value={ownerAccountSearch}
               onChange={event => setOwnerAccountSearch(event.target.value)}
             />
-            <button type='button' className={styles.secondaryButton} onClick={() => void exportOwnerAccounts()}>
+            <button type='button' className={styles.secondaryButton} onClick={() => setExportAccountsOpen(true)}>
               Exportar Excel
             </button>
           </div>
@@ -4118,6 +4192,52 @@ export default function PanelPage() {
         </div>
         {renderSectionButtons(styles.mobileNavList)}
       </div>
+
+      {exportAccountsOpen && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modalCard}>
+            <div className={styles.modalHeader}>
+              <div>
+                <span className={styles.blockEyebrow}>Exportar Excel</span>
+                <h3>Elige el dominio</h3>
+              </div>
+              <button type='button' className={styles.modalClose} onClick={() => setExportAccountsOpen(false)}>
+                Cerrar
+              </button>
+            </div>
+
+            <div className={styles.formStack}>
+              <div className={styles.confirmBox}>
+                <strong>Descargar solo las cuentas del dominio @cryxteam.com</strong>
+                <span>
+                  Tambien puedes elegir otro dominio disponible. El Excel solo incluye clientes directos del owner,
+                  sin subclientes, para evitar correos repetidos.
+                </span>
+              </div>
+
+              {exportDomainOptions.length === 0 ? (
+                <div className={styles.emptyCard}>No hay cuentas directas del owner para exportar.</div>
+              ) : (
+                <div className={styles.exportDomainGrid}>
+                  {exportDomainOptions.map(option => (
+                    <button
+                      key={option.domain}
+                      type='button'
+                      className={
+                        option.domain === 'cryxteam.com' ? styles.exportDomainButtonPrimary : styles.exportDomainButton
+                      }
+                      onClick={() => void exportOwnerAccounts(option.domain)}
+                    >
+                      <strong>@{option.domain}</strong>
+                      <span>{option.count} cuentas</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {removeConfirmAccount && (
         <div className={styles.modalOverlay}>
