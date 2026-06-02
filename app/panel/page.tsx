@@ -32,7 +32,7 @@ const USER_SECTIONS = [
 
 const OWNER_SECTIONS = [
   { id: 'vip', label: 'Usuarios', icon: 'crown' },
-  { id: 'solicitudes', label: 'Solicitudes', icon: 'bell' },
+  { id: 'solicitudes', label: 'Solicitudessss', icon: 'bell' },
   { id: 'asignacion', label: 'Asignacion', icon: 'spark' },
   { id: 'ventas', label: 'Ventas', icon: 'clock' },
   { id: 'telegram', label: 'Telegram', icon: 'send' },
@@ -556,6 +556,7 @@ export default function PanelPage() {
   const [childAccountFilter, setChildAccountFilter] = useState<OwnerAccountFilter>('todos')
   const [ownerAccountFilter, setOwnerAccountFilter] = useState<OwnerAccountFilter>('todos')
   const [userAccountFilter, setUserAccountFilter] = useState<UserAccountFilter>('todos')
+  const [userAccountSearch, setUserAccountSearch] = useState('')
   const [supportChoiceAccount, setSupportChoiceAccount] = useState<PanelAccount | null>(null)
   const [issueAccount, setIssueAccount] = useState<PanelAccount | null>(null)
   const [renewalAccount, setRenewalAccount] = useState<PanelAccount | null>(null)
@@ -2332,8 +2333,12 @@ export default function PanelPage() {
       }).length,
       soporte: accounts.filter(account => Boolean(getAccountSupportBlockReason(account))).length,
     }
+    const searchTerm = userAccountSearch.trim().toLowerCase()
     const filteredAccounts = accounts.filter(account => {
       const days = getSafeDaysRemaining(account.daysRemaining)
+      const matchesSearch = !searchTerm || account.accountEmail.toLowerCase().includes(searchTerm)
+
+      if (!matchesSearch) return false
 
       if (userAccountFilter === 'vigentes') return days !== null && days > 7
       if (userAccountFilter === 'por_vencer') return days !== null && days > 0 && days <= 7
@@ -2342,7 +2347,7 @@ export default function PanelPage() {
 
       return true
     })
-    const pageKey = `user-accounts-${userAccountFilter}`
+    const pageKey = `user-accounts-${userAccountFilter}-${searchTerm}`
     const pageAccounts = getPageItems(pageKey, filteredAccounts)
     const renderSupportButton = (account: PanelAccount) => {
       const supportBlockReason = getAccountSupportBlockReason(account)
@@ -2395,10 +2400,22 @@ export default function PanelPage() {
             ))}
           </div>
 
+          <label className={styles.searchField}>
+            <span>Buscar correo</span>
+            <input
+              className={styles.input}
+              value={userAccountSearch}
+              onChange={event => setUserAccountSearch(event.target.value)}
+              placeholder='Buscar por correo'
+            />
+          </label>
+
           {accounts.length === 0 ? (
             <div className={styles.emptyCard}>Todavia no tienes cuentas asignadas.</div>
           ) : filteredAccounts.length === 0 ? (
-            <div className={styles.emptyCard}>No hay cuentas en este filtro.</div>
+            <div className={styles.emptyCard}>
+              {searchTerm ? 'No hay cuentas con ese correo.' : 'No hay cuentas en este filtro.'}
+            </div>
           ) : (
             <>
               <div className={styles.tableWrap}>

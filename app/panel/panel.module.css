@@ -750,6 +750,21 @@
   outline: none;
 }
 
+.searchField {
+  display: grid;
+  gap: 8px;
+  max-width: 520px;
+  margin: 12px 0 4px;
+}
+
+.searchField span {
+  color: #ff8f9a;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
 .textarea {
   min-height: 120px;
   resize: vertical;
