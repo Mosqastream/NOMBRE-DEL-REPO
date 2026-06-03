@@ -38,7 +38,7 @@ type SpotinetAction = {
 const DEFAULT_BASE_URL = 'https://www.spotinetshop.com'
 const DEFAULT_BACKEND_URL = 'https://spotinet-backend-798163743367.us-central1.run.app'
 const DEFAULT_MAX_ITEMS = 4
-const DEFAULT_SEARCH_TIMEOUT_MS = 10000
+const DEFAULT_SEARCH_TIMEOUT_MS = 15000
 const DEFAULT_RETRY_WAIT_MS = 1500
 
 const SPOTINET_ACTIONS: SpotinetAction[] = [
