@@ -8,6 +8,7 @@ import { fetchGlowpremMessages, isGlowpremConfigured, type GlowpremMessage } fro
 import { fetchGoatstreamMessages, isGoatstreamConfigured, type GoatstreamMessage } from '@/lib/codes-goatstream'
 import { getNetflixActionPayload } from '@/lib/codes-netflix-actions'
 import { fetchSdnetpanelMessages, isSdnetpanelConfigured, type SdnetpanelMessage } from '@/lib/codes-sdnetpanel'
+import { fetchSpotinetMessages, isSpotinetConfigured, type SpotinetMessage } from '@/lib/codes-spotinet'
 import { detectCodePlatform, type CodePlatformKey, type CodePlatformMatch } from '@/lib/codes-shared'
 
 export const runtime = 'nodejs'
@@ -163,12 +164,14 @@ const getAvailableSourcesForPlatform = (params: {
   hasGlowprem: boolean
   hasGoatstream: boolean
   hasSdnetpanel: boolean
+  hasSpotinet: boolean
 }) => {
   if (params.platform === 'netflix') {
     return [
       params.hasImap ? 'IMAP' : null,
       params.hasGoatstream ? 'Goatstream' : null,
       params.hasSdnetpanel ? 'SDNetPanel' : null,
+      params.hasSpotinet ? 'Spotinet' : null,
     ].filter(Boolean) as string[]
   }
 
@@ -315,7 +318,9 @@ const shouldHideNetflixCode = (text: string) => {
   return /\b\d{6}\b/.test(text)
 }
 
-const dedupeMessages = (messages: Array<ImapMessage | GlowpremMessage | GoatstreamMessage | SdnetpanelMessage>) => {
+const dedupeMessages = (
+  messages: Array<ImapMessage | GlowpremMessage | GoatstreamMessage | SdnetpanelMessage | SpotinetMessage>
+) => {
   const seen = new Set<string>()
 
   return messages.filter(message => {
@@ -350,12 +355,14 @@ export async function GET(request: NextRequest) {
   const glowpremEnabled = selectedPlatform === 'disney' && isGlowpremConfigured()
   const goatstreamEnabled = isGoatstreamConfigured()
   const sdnetpanelEnabled = isSdnetpanelConfigured()
+  const spotinetEnabled = selectedPlatform === 'netflix' && isSpotinetConfigured()
   const availableSources = getAvailableSourcesForPlatform({
     platform: selectedPlatform,
     hasImap: Boolean(imapConfig),
     hasGlowprem: glowpremEnabled,
     hasGoatstream: goatstreamEnabled,
     hasSdnetpanel: sdnetpanelEnabled,
+    hasSpotinet: spotinetEnabled,
   })
 
   if (availableSources.length === 0) {
@@ -363,7 +370,7 @@ export async function GET(request: NextRequest) {
       {
         error:
           selectedPlatform === 'netflix'
-            ? 'No hay fuentes de codigos para Netflix. Configura IMAP, Goatstream o SDNetPanel en .env.local.'
+            ? 'No hay fuentes de codigos para Netflix. Configura IMAP, Goatstream, SDNetPanel o Spotinet en .env.local.'
             : selectedPlatform === 'disney'
               ? 'No hay fuentes de codigos para Disney+. Configura IMAP, Glowprem, Goatstream o SDNetPanel en .env.local.'
               : 'No hay fuentes de codigos para HBO Max. Configura IMAP o SDNetPanel en .env.local.',
@@ -390,7 +397,7 @@ export async function GET(request: NextRequest) {
     Promise<
       | {
           mailbox?: string
-          messages: Array<ImapMessage | GlowpremMessage | GoatstreamMessage | SdnetpanelMessage>
+          messages: Array<ImapMessage | GlowpremMessage | GoatstreamMessage | SdnetpanelMessage | SpotinetMessage>
           source: string
           totalScanned: number
           variantLabels?: string[]
@@ -444,12 +451,23 @@ export async function GET(request: NextRequest) {
     )
   }
 
+  if (spotinetEnabled) {
+    tasks.push(
+      fetchSpotinetMessages({ platform: selectedPlatform, recipient }).then(result => ({
+        messages: result.messages,
+        source: 'spotinet',
+        totalScanned: result.totalScanned,
+        variantLabels: result.variantsScanned,
+      }))
+    )
+  }
+
   const settled = await Promise.allSettled(tasks)
   const successfulSources = settled
     .filter(
       (result): result is PromiseFulfilledResult<{
         mailbox?: string
-        messages: Array<ImapMessage | GoatstreamMessage | SdnetpanelMessage>
+        messages: Array<ImapMessage | GoatstreamMessage | SdnetpanelMessage | SpotinetMessage>
         source: string
         totalScanned: number
         variantLabels?: string[]

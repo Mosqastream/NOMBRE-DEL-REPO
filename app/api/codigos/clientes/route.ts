@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { fetchSdnetpanelMessages, isSdnetpanelConfigured } from '@/lib/codes-sdnetpanel'
+import { fetchSpotinetMessages, isSpotinetConfigured } from '@/lib/codes-spotinet'
 import { getNetflixActionPayload } from '@/lib/codes-netflix-actions'
 
 export const runtime = 'nodejs'
@@ -351,6 +352,52 @@ async function readSdnetpanelClientMails(recipient: string) {
   return grouped
 }
 
+async function readSpotinetClientMails(recipient: string) {
+  const grouped: Record<ClienteKind, ClienteMailResult[]> = {
+    travel: [],
+    household: [],
+  }
+
+  if (!isSpotinetConfigured()) return grouped
+
+  const result = await fetchSpotinetMessages({
+    platform: 'netflix',
+    recipient,
+  })
+
+  for (const message of result.messages) {
+    const action = getNetflixActionPayload({
+      subject: message.subject,
+      bodyText: message.bodyText,
+      bodyHtml: message.bodyHtml,
+    })
+    const isCombinedHomeOrTravel = /actualizar hogar|estoy de viaje|acceso temporal/i.test(
+      `${message.subject}\n${message.variantLabel}\n${message.bodyText}`
+    )
+    const kinds: ClienteKind[] = isCombinedHomeOrTravel
+      ? ['travel', 'household']
+      : action.kind === 'travel' || action.kind === 'household'
+        ? [action.kind]
+        : []
+
+    for (const kind of kinds) {
+      grouped[kind].push({
+        id: `${kind}-${message.messageId}`,
+        subject: message.subject || KIND_RULES[kind].title,
+        from: message.from,
+        receivedAt: message.date.toISOString(),
+        actionUrl: action.url,
+        actionLabel: action.label || KIND_RULES[kind].title,
+        snippet: buildSnippet(`${message.subject}\n${message.bodyText}`),
+        bodyHtml: message.bodyHtml,
+        bodyText: message.bodyText,
+      })
+    }
+  }
+
+  return grouped
+}
+
 export async function GET(request: NextRequest) {
   try {
     const recipient = ensureRecipient(request.nextUrl.searchParams.get('recipient') || '')
@@ -364,7 +411,7 @@ export async function GET(request: NextRequest) {
     }
     const errors: string[] = []
 
-    for (const loader of [readNetflixClientMails, readSdnetpanelClientMails]) {
+    for (const loader of [readNetflixClientMails, readSdnetpanelClientMails, readSpotinetClientMails]) {
       try {
         const result = await loader(recipient)
         grouped.travel.push(...result.travel)
