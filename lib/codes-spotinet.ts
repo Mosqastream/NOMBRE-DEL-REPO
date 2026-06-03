@@ -38,7 +38,7 @@ type SpotinetAction = {
 const DEFAULT_BASE_URL = 'https://www.spotinetshop.com'
 const DEFAULT_BACKEND_URL = 'https://spotinet-backend-798163743367.us-central1.run.app'
 const DEFAULT_MAX_ITEMS = 4
-const DEFAULT_SEARCH_TIMEOUT_MS = 15000
+const DEFAULT_SEARCH_TIMEOUT_MS = 20000
 const DEFAULT_RETRY_WAIT_MS = 1500
 
 const SPOTINET_ACTIONS: SpotinetAction[] = [
@@ -298,22 +298,32 @@ const requestActionWithRetry = async (params: {
   recipient: string
   token: string
 }) => {
-  const timeoutMs = toPositiveInt(process.env.SPOTINET_SEARCH_TIMEOUT_MS, DEFAULT_SEARCH_TIMEOUT_MS)
-  const waitMs = toPositiveInt(process.env.SPOTINET_RETRY_WAIT_MS, DEFAULT_RETRY_WAIT_MS)
+  const timeoutMs = DEFAULT_SEARCH_TIMEOUT_MS
+  const waitMs = DEFAULT_RETRY_WAIT_MS
   let lastPayload: Record<string, unknown> = {}
+  let lastError: unknown = null
   const deadline = Date.now() + timeoutMs
 
   while (Date.now() <= deadline) {
-    lastPayload = await requestAction(params)
-    const rawValue = readString(lastPayload[params.action.responseKey])
+    try {
+      lastPayload = await requestAction(params)
+      lastError = null
+      const rawValue = readString(lastPayload[params.action.responseKey])
 
-    if (!isEmptyProviderValue(rawValue)) {
-      return lastPayload
+      if (!isEmptyProviderValue(rawValue)) {
+        return lastPayload
+      }
+    } catch (error) {
+      lastError = error
     }
 
     const remainingMs = deadline - Date.now()
     if (remainingMs <= 0) break
     await sleep(Math.min(waitMs, remainingMs))
+  }
+
+  if (lastError && Object.keys(lastPayload).length === 0) {
+    throw lastError
   }
 
   return lastPayload
