@@ -380,8 +380,10 @@ export async function GET(request: NextRequest) {
     )
   }
 
+  let accessMode: Awaited<ReturnType<typeof enforceCodesRecipientAccess>>
+
   try {
-    await enforceCodesRecipientAccess({
+    accessMode = await enforceCodesRecipientAccess({
       request,
       recipient,
     })
@@ -392,6 +394,74 @@ export async function GET(request: NextRequest) {
 
     const message = error instanceof Error ? error.message : 'No se pudo validar el acceso.'
     return NextResponse.json({ error: message }, { status: 500 })
+  }
+
+  if (request.nextUrl.searchParams.get('debug') === '1' && accessMode.mode === 'owner') {
+    const spotinetProbeStartedAt = Date.now()
+    let spotinetProbe:
+      | {
+          elapsed_ms: number
+          error?: string
+          item_count?: number
+          ok: boolean
+          sample?: {
+            body_text: string
+            source: string
+            subject: string
+            variant_label: string
+          } | null
+          total_scanned?: number
+          variants?: string[]
+        }
+      | null = null
+
+    if (spotinetEnabled) {
+      try {
+        const result = await fetchSpotinetMessages({ platform: selectedPlatform, recipient })
+        spotinetProbe = {
+          elapsed_ms: Date.now() - spotinetProbeStartedAt,
+          item_count: result.messages.length,
+          ok: true,
+          sample: result.messages[0]
+            ? {
+                body_text: result.messages[0].bodyText,
+                source: result.messages[0].source,
+                subject: result.messages[0].subject,
+                variant_label: result.messages[0].variantLabel,
+              }
+            : null,
+          total_scanned: result.totalScanned,
+          variants: result.variantsScanned,
+        }
+      } catch (error) {
+        spotinetProbe = {
+          elapsed_ms: Date.now() - spotinetProbeStartedAt,
+          error: error instanceof Error ? error.message : 'Spotinet fallo sin mensaje.',
+          ok: false,
+        }
+      }
+    }
+
+    return NextResponse.json({
+      available_sources: availableSources,
+      flags: {
+        glowprem: glowpremEnabled,
+        goatstream: goatstreamEnabled,
+        imap: Boolean(imapConfig),
+        sdnetpanel: sdnetpanelEnabled,
+        spotinet: spotinetEnabled,
+      },
+      env: {
+        spotinetAccountsJson: Boolean(process.env.SPOTINET_ACCOUNTS_JSON),
+        spotinetAccountsJsonLength: (process.env.SPOTINET_ACCOUNTS_JSON || '').length,
+        spotinetBackendUrl: Boolean(process.env.SPOTINET_BACKEND_URL),
+        spotinetBaseUrl: Boolean(process.env.SPOTINET_BASE_URL),
+        spotinetMaxItems: Boolean(process.env.SPOTINET_MAX_ITEMS),
+        spotinetPassword: Boolean(process.env.SPOTINET_PASSWORD),
+        spotinetUsername: Boolean(process.env.SPOTINET_USERNAME),
+      },
+      spotinet_probe: spotinetProbe,
+    })
   }
 
   const tasks: Array<

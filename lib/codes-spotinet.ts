@@ -1,3 +1,5 @@
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { stripHtml } from './lemon-parser'
 import { type CodePlatformKey } from './codes-shared'
 
@@ -29,6 +31,7 @@ type SpotinetAction = {
   bodyLabel: string
   key: string
   method: 'GET' | 'POST'
+  pagePath: string
   path: (recipient: string) => string
   responseKey: 'code' | 'link'
   subject: string
@@ -38,14 +41,18 @@ type SpotinetAction = {
 const DEFAULT_BASE_URL = 'https://www.spotinetshop.com'
 const DEFAULT_BACKEND_URL = 'https://spotinet-backend-798163743367.us-central1.run.app'
 const DEFAULT_MAX_ITEMS = 4
-const DEFAULT_SEARCH_TIMEOUT_MS = 20000
+const DEFAULT_SEARCH_TIMEOUT_MS = 55000
+const DEFAULT_ACTION_TIMEOUT_MS = 20000
 const DEFAULT_RETRY_WAIT_MS = 1500
+const SPOTINET_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36'
 
 const SPOTINET_ACTIONS: SpotinetAction[] = [
   {
     bodyLabel: 'Codigo de inicio de sesion',
     key: 'session_code',
     method: 'POST',
+    pagePath: '/session_netflix_code',
     path: () => '/netflix/session_code/',
     responseKey: 'code',
     subject: 'Netflix: Tu codigo de inicio de sesion',
@@ -55,6 +62,7 @@ const SPOTINET_ACTIONS: SpotinetAction[] = [
     bodyLabel: 'Codigo de verificacion',
     key: 'verification_code',
     method: 'POST',
+    pagePath: '/netflix_verification_code',
     path: () => '/netflix/verification_code/',
     responseKey: 'code',
     subject: 'Netflix: Codigo de verificacion',
@@ -64,6 +72,7 @@ const SPOTINET_ACTIONS: SpotinetAction[] = [
     bodyLabel: 'Restablecer contrasena',
     key: 'password_reset',
     method: 'POST',
+    pagePath: '/password_reset',
     path: () => '/netflix/password_reset/',
     responseKey: 'link',
     subject: 'Netflix: Restablecer contrasena',
@@ -73,6 +82,7 @@ const SPOTINET_ACTIONS: SpotinetAction[] = [
     bodyLabel: 'Actualizar hogar o acceso temporal de viaje',
     key: 'home_or_temporal',
     method: 'GET',
+    pagePath: '/home_or_temporal',
     path: recipient => `/netflix/home_code_or_temporal_access/${encodeURIComponent(recipient)}`,
     responseKey: 'link',
     subject: 'Netflix: Actualizar hogar o Estoy de viaje',
@@ -143,6 +153,71 @@ const hashText = (value: string) => {
   }
   return hash || 1
 }
+
+const requestJsonWithNode = async (params: {
+  body?: string
+  headers: Record<string, string>
+  method: 'GET' | 'POST'
+  signal?: AbortSignal
+  url: string
+}) =>
+  new Promise<Record<string, unknown>>((resolve, reject) => {
+    const url = new URL(params.url)
+    const body = params.body || ''
+    const requestFn = url.protocol === 'http:' ? httpRequest : httpsRequest
+    const headers = {
+      ...params.headers,
+      ...(body ? { 'Content-Length': String(Buffer.byteLength(body)) } : {}),
+    }
+
+    const request = requestFn(
+      url,
+      {
+        family: 4,
+        headers,
+        method: params.method,
+      },
+      response => {
+        const chunks: Buffer[] = []
+
+        response.on('data', chunk => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+        })
+
+        response.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8')
+          if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+            reject(new Error(`Spotinet devolvio estado ${response.statusCode || 0}.`))
+            return
+          }
+
+          try {
+            resolve(raw ? (JSON.parse(raw) as Record<string, unknown>) : {})
+          } catch {
+            resolve({ raw })
+          }
+        })
+      }
+    )
+
+    const abort = () => {
+      request.destroy(new Error('This operation was aborted'))
+    }
+
+    if (params.signal) {
+      if (params.signal.aborted) {
+        abort()
+        return
+      }
+
+      params.signal.addEventListener('abort', abort, { once: true })
+      request.on('close', () => params.signal?.removeEventListener('abort', abort))
+    }
+
+    request.on('error', reject)
+    if (body) request.write(body)
+    request.end()
+  })
 
 const parseJsonConfigs = (): SpotinetConfig[] => {
   const raw = normalizeText(process.env.SPOTINET_ACCOUNTS_JSON)
@@ -275,23 +350,22 @@ const requestAction = async (params: {
   signal?: AbortSignal
   token: string
 }) => {
-  const response = await fetch(`${params.config.backendUrl}${params.action.path(params.recipient)}`, {
-    method: params.action.method,
+  const payload = params.action.method === 'POST' ? JSON.stringify({ email: params.recipient }) : undefined
+
+  return requestJsonWithNode({
+    body: payload,
     headers: {
       Accept: 'application/json',
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
+      Origin: params.config.baseUrl,
+      Referer: `${params.config.baseUrl}${params.action.pagePath}`,
+      'User-Agent': SPOTINET_USER_AGENT,
     },
-    body: params.action.method === 'POST' ? JSON.stringify({ email: params.recipient }) : undefined,
-    cache: 'no-store',
+    method: params.action.method,
     signal: params.signal,
+    url: `${params.config.backendUrl}${params.action.path(params.recipient)}`,
   })
-
-  if (!response.ok) {
-    throw new Error(`Spotinet devolvio estado ${response.status} en ${params.action.variantLabel}.`)
-  }
-
-  return (await response.json()) as Record<string, unknown>
 }
 
 const requestActionWithinWindow = async (params: {
@@ -305,7 +379,7 @@ const requestActionWithinWindow = async (params: {
   if (remainingMs <= 0) return {}
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), remainingMs)
+  const timeoutId = setTimeout(() => controller.abort(), Math.min(remainingMs, DEFAULT_ACTION_TIMEOUT_MS))
 
   try {
     return await requestAction({
@@ -326,46 +400,58 @@ const requestActionsUntilFound = async (params: {
   token: string
 }) => {
   const deadline = Date.now() + DEFAULT_SEARCH_TIMEOUT_MS
-  const messages: SpotinetMessage[] = []
-  let lastError: unknown = null
+  let found = false
 
-  while (Date.now() < deadline && messages.length === 0) {
-    for (const [index, action] of SPOTINET_ACTIONS.entries()) {
-      if (Date.now() >= deadline) break
+  const settled = await Promise.allSettled(
+    SPOTINET_ACTIONS.map(async (action, index) => {
+      let lastError: unknown = null
 
-      try {
-        const payload = await requestActionWithinWindow({
-          action,
-          config: params.config,
-          deadline,
-          recipient: params.recipient,
-          token: params.token,
-        })
-        const rawValue = readString(payload[action.responseKey])
-        const message = buildMessage({
-          action,
-          config: params.config,
-          index,
-          recipient: params.recipient,
-          value: rawValue || stripHtml(JSON.stringify(payload)),
-        })
+      while (Date.now() < deadline && !found) {
+        try {
+          const payload = await requestActionWithinWindow({
+            action,
+            config: params.config,
+            deadline,
+            recipient: params.recipient,
+            token: params.token,
+          })
+          const rawValue = readString(payload[action.responseKey])
+          const message = buildMessage({
+            action,
+            config: params.config,
+            index,
+            recipient: params.recipient,
+            value: rawValue || stripHtml(JSON.stringify(payload)),
+          })
 
-        if (message) {
-          messages.push(message)
-          break
+          if (message) {
+            found = true
+            return message
+          }
+        } catch (error) {
+          lastError = error
         }
-      } catch (error) {
-        lastError = error
+
+        const remainingMs = deadline - Date.now()
+        if (remainingMs <= 0 || found) break
+        await sleep(Math.min(DEFAULT_RETRY_WAIT_MS, remainingMs))
       }
-    }
 
-    const remainingMs = deadline - Date.now()
-    if (remainingMs <= 0) break
-    if (messages.length === 0) await sleep(Math.min(DEFAULT_RETRY_WAIT_MS, remainingMs))
-  }
+      if (lastError) throw lastError
+      return null
+    })
+  )
 
-  if (messages.length === 0 && lastError) {
-    throw lastError
+  const messages = settled
+    .filter((result): result is PromiseFulfilledResult<SpotinetMessage | null> => result.status === 'fulfilled')
+    .map(result => result.value)
+    .filter((message): message is SpotinetMessage => Boolean(message))
+
+  const failed = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+
+  if (messages.length === 0 && failed.length === settled.length) {
+    const firstError = failed[0].reason
+    throw firstError instanceof Error ? firstError : new Error('Spotinet no pudo completar la busqueda.')
   }
 
   return messages
