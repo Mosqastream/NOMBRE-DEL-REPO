@@ -257,6 +257,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Cierre enviado para confirmacion del cliente.' })
     }
 
+    if (action === 'force_close') {
+      if (session.profile.role !== 'owner' || currentRequest.owner_id !== session.profile.id) {
+        throw new PanelApiError('Solo el owner puede forzar el cierre.', 403)
+      }
+
+      await archiveAndDeleteRequest(session, currentRequest)
+      return NextResponse.json({ message: 'Ticket cerrado por el owner y archivado.' })
+    }
+
     if (action === 'replace_account_email') {
       if (session.profile.role !== 'owner' || currentRequest.owner_id !== session.profile.id) {
         throw new PanelApiError('Solo el owner puede reemplazar esta cuenta.', 403)

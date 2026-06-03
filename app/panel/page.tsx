@@ -564,6 +564,7 @@ export default function PanelPage() {
   const [expandedUserId, setExpandedUserId] = useState<string | null>('all')
   const [ownerUserSearch, setOwnerUserSearch] = useState('')
   const [ownerAccountSearch, setOwnerAccountSearch] = useState('')
+  const [ownerRequestSearch, setOwnerRequestSearch] = useState('')
   const [childUserSearch, setChildUserSearch] = useState('')
   const [childExpandedUserId, setChildExpandedUserId] = useState<string | null>('all')
   const [childAccountSearch, setChildAccountSearch] = useState('')
@@ -1603,7 +1604,7 @@ export default function PanelPage() {
     }
   }
 
-  const closeRequestFlow = async (requestId: string, action: 'request_close' | 'confirm_close') => {
+  const closeRequestFlow = async (requestId: string, action: 'request_close' | 'confirm_close' | 'force_close') => {
     setSaving(true)
     setError('')
     try {
@@ -1664,7 +1665,7 @@ export default function PanelPage() {
           }
         )
         setSelectedRequestId(null)
-        setNotice('Ticket cerrado y movido a historial.')
+        setNotice(action === 'force_close' ? 'Ticket cerrado por el owner y movido a historial.' : 'Ticket cerrado y movido a historial.')
       }
       void refreshPanel(true)
     } catch (submitError) {
@@ -3458,9 +3459,25 @@ export default function PanelPage() {
   )
 
   const renderSupportSectionV2 = (ownerMode: boolean) => {
-    const pageKey = ownerMode ? 'owner-requests' : 'user-requests'
-    const pageRequests = getPageItems(pageKey, currentRequests)
-    const requestPage = getCurrentPage(pageKey, currentRequests.length)
+    const ownerRequestTerm = ownerRequestSearch.trim().toLowerCase()
+    const visibleRequests =
+      ownerMode && ownerRequestTerm
+        ? currentRequests.filter(request =>
+            [
+              request.accountEmail,
+              request.requesterUsername,
+              request.ownerUsername,
+              request.serviceName,
+              request.subject,
+              request.description,
+            ]
+              .filter(Boolean)
+              .some(value => String(value).toLowerCase().includes(ownerRequestTerm))
+          )
+        : currentRequests
+    const pageKey = ownerMode ? `owner-requests-${ownerRequestTerm}` : 'user-requests'
+    const pageRequests = getPageItems(pageKey, visibleRequests)
+    const requestPage = getCurrentPage(pageKey, visibleRequests.length)
 
     return (
     <div className={styles.sectionSplit}>
@@ -3472,8 +3489,22 @@ export default function PanelPage() {
           </div>
         </div>
 
-        {currentRequests.length === 0 ? (
-          <div className={styles.emptyCard}>Todavia no hay solicitudes en esta vista.</div>
+        {ownerMode && (
+          <label className={styles.searchField}>
+            <span>Filtrar tickets</span>
+            <input
+              className={styles.input}
+              placeholder='Buscar por correo, cliente o asunto'
+              value={ownerRequestSearch}
+              onChange={event => setOwnerRequestSearch(event.target.value)}
+            />
+          </label>
+        )}
+
+        {visibleRequests.length === 0 ? (
+          <div className={styles.emptyCard}>
+            {ownerRequestTerm ? 'No hay tickets con ese filtro.' : 'Todavia no hay solicitudes en esta vista.'}
+          </div>
         ) : (
           <div className={styles.requestList}>
             {pageRequests.map((request, index) => (
@@ -3495,7 +3526,7 @@ export default function PanelPage() {
                 </div>
               </button>
             ))}
-            {renderPagination(pageKey, currentRequests.length)}
+            {renderPagination(pageKey, visibleRequests.length)}
           </div>
         )}
       </div>
@@ -3643,6 +3674,14 @@ export default function PanelPage() {
                   disabled={saving}
                 >
                   Cerrar ticket
+                </button>
+                <button
+                  type='button'
+                  className={styles.dangerButton}
+                  onClick={() => void closeRequestFlow(selectedRequest.id, 'force_close')}
+                  disabled={saving}
+                >
+                  Forzar cierre de ticket
                 </button>
               </div>
             )}
