@@ -272,6 +272,7 @@ const requestAction = async (params: {
   action: SpotinetAction
   config: SpotinetConfig
   recipient: string
+  signal?: AbortSignal
   token: string
 }) => {
   const response = await fetch(`${params.config.backendUrl}${params.action.path(params.recipient)}`, {
@@ -283,6 +284,7 @@ const requestAction = async (params: {
     },
     body: params.action.method === 'POST' ? JSON.stringify({ email: params.recipient }) : undefined,
     cache: 'no-store',
+    signal: params.signal,
   })
 
   if (!response.ok) {
@@ -292,41 +294,81 @@ const requestAction = async (params: {
   return (await response.json()) as Record<string, unknown>
 }
 
-const requestActionWithRetry = async (params: {
+const requestActionWithinWindow = async (params: {
   action: SpotinetAction
+  config: SpotinetConfig
+  deadline: number
+  recipient: string
+  token: string
+}) => {
+  const remainingMs = params.deadline - Date.now()
+  if (remainingMs <= 0) return {}
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), remainingMs)
+
+  try {
+    return await requestAction({
+      action: params.action,
+      config: params.config,
+      recipient: params.recipient,
+      signal: controller.signal,
+      token: params.token,
+    })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+const requestActionsUntilFound = async (params: {
   config: SpotinetConfig
   recipient: string
   token: string
 }) => {
-  const timeoutMs = DEFAULT_SEARCH_TIMEOUT_MS
-  const waitMs = DEFAULT_RETRY_WAIT_MS
-  let lastPayload: Record<string, unknown> = {}
+  const deadline = Date.now() + DEFAULT_SEARCH_TIMEOUT_MS
+  const messages: SpotinetMessage[] = []
   let lastError: unknown = null
-  const deadline = Date.now() + timeoutMs
 
-  while (Date.now() <= deadline) {
-    try {
-      lastPayload = await requestAction(params)
-      lastError = null
-      const rawValue = readString(lastPayload[params.action.responseKey])
+  while (Date.now() < deadline && messages.length === 0) {
+    for (const [index, action] of SPOTINET_ACTIONS.entries()) {
+      if (Date.now() >= deadline) break
 
-      if (!isEmptyProviderValue(rawValue)) {
-        return lastPayload
+      try {
+        const payload = await requestActionWithinWindow({
+          action,
+          config: params.config,
+          deadline,
+          recipient: params.recipient,
+          token: params.token,
+        })
+        const rawValue = readString(payload[action.responseKey])
+        const message = buildMessage({
+          action,
+          config: params.config,
+          index,
+          recipient: params.recipient,
+          value: rawValue || stripHtml(JSON.stringify(payload)),
+        })
+
+        if (message) {
+          messages.push(message)
+          break
+        }
+      } catch (error) {
+        lastError = error
       }
-    } catch (error) {
-      lastError = error
     }
 
     const remainingMs = deadline - Date.now()
     if (remainingMs <= 0) break
-    await sleep(Math.min(waitMs, remainingMs))
+    if (messages.length === 0) await sleep(Math.min(DEFAULT_RETRY_WAIT_MS, remainingMs))
   }
 
-  if (lastError && Object.keys(lastPayload).length === 0) {
+  if (messages.length === 0 && lastError) {
     throw lastError
   }
 
-  return lastPayload
+  return messages
 }
 
 const buildMessage = (params: {
@@ -366,25 +408,7 @@ const buildMessage = (params: {
 
 const fetchConfigMessages = async (config: SpotinetConfig, recipient: string) => {
   const token = await login(config)
-
-  const settled = await Promise.allSettled(
-    SPOTINET_ACTIONS.map(async (action, index) => {
-      const payload = await requestActionWithRetry({ action, config, recipient, token })
-      const rawValue = readString(payload[action.responseKey])
-      return buildMessage({
-        action,
-        config,
-        index,
-        recipient,
-        value: rawValue || stripHtml(JSON.stringify(payload)),
-      })
-    })
-  )
-
-  const messages = settled
-    .filter((result): result is PromiseFulfilledResult<SpotinetMessage | null> => result.status === 'fulfilled')
-    .map(result => result.value)
-    .filter((message): message is SpotinetMessage => Boolean(message))
+  const messages = await requestActionsUntilFound({ config, recipient, token })
 
   return {
     messages: messages.slice(0, config.maxItems),
@@ -408,24 +432,22 @@ export const fetchSpotinetMessages = async (params: {
     return { messages: [], totalScanned: 0, variantsScanned: [] }
   }
 
-  const successful: Array<{
-    messages: SpotinetMessage[]
-    totalScanned: number
-    variantsScanned: string[]
-  }> = []
-  const failed: unknown[] = []
   const recipient = normalizeEmail(params.recipient)
 
-  for (const config of configs) {
-    try {
-      successful.push(await fetchConfigMessages(config, recipient))
-    } catch (error) {
-      failed.push(error)
-    }
-  }
+  const settled = await Promise.allSettled(configs.map(config => fetchConfigMessages(config, recipient)))
+  const successful = settled
+    .filter(
+      (result): result is PromiseFulfilledResult<{
+        messages: SpotinetMessage[]
+        totalScanned: number
+        variantsScanned: string[]
+      }> => result.status === 'fulfilled'
+    )
+    .map(result => result.value)
+  const failed = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
 
   if (successful.length === 0 && failed.length > 0) {
-    const firstError = failed[0]
+    const firstError = failed[0].reason
     throw firstError instanceof Error ? firstError : new Error('Spotinet no pudo cargar ninguna cuenta.')
   }
 
