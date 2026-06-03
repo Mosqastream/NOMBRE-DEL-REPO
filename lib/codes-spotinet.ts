@@ -38,6 +38,8 @@ type SpotinetAction = {
 const DEFAULT_BASE_URL = 'https://www.spotinetshop.com'
 const DEFAULT_BACKEND_URL = 'https://spotinet-backend-798163743367.us-central1.run.app'
 const DEFAULT_MAX_ITEMS = 4
+const DEFAULT_RETRY_ATTEMPTS = 3
+const DEFAULT_RETRY_WAIT_MS = 2500
 
 const SPOTINET_ACTIONS: SpotinetAction[] = [
   {
@@ -88,6 +90,8 @@ const toPositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
 }
+
+const sleep = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds))
 
 const buildAccountId = (baseUrl: string, email: string) =>
   `${baseUrl.toLowerCase()}|${email.toLowerCase()}`.replace(/[^a-z0-9|._:@/-]+/g, '-')
@@ -288,6 +292,32 @@ const requestAction = async (params: {
   return (await response.json()) as Record<string, unknown>
 }
 
+const requestActionWithRetry = async (params: {
+  action: SpotinetAction
+  config: SpotinetConfig
+  recipient: string
+  token: string
+}) => {
+  const attempts = toPositiveInt(process.env.SPOTINET_RETRY_ATTEMPTS, DEFAULT_RETRY_ATTEMPTS)
+  const waitMs = toPositiveInt(process.env.SPOTINET_RETRY_WAIT_MS, DEFAULT_RETRY_WAIT_MS)
+  let lastPayload: Record<string, unknown> = {}
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    lastPayload = await requestAction(params)
+    const rawValue = readString(lastPayload[params.action.responseKey])
+
+    if (!isEmptyProviderValue(rawValue)) {
+      return lastPayload
+    }
+
+    if (attempt < attempts) {
+      await sleep(waitMs)
+    }
+  }
+
+  return lastPayload
+}
+
 const buildMessage = (params: {
   action: SpotinetAction
   config: SpotinetConfig
@@ -325,24 +355,25 @@ const buildMessage = (params: {
 
 const fetchConfigMessages = async (config: SpotinetConfig, recipient: string) => {
   const token = await login(config)
-  const messages: SpotinetMessage[] = []
 
-  for (const [index, action] of SPOTINET_ACTIONS.entries()) {
-    try {
-      const payload = await requestAction({ action, config, recipient, token })
+  const settled = await Promise.allSettled(
+    SPOTINET_ACTIONS.map(async (action, index) => {
+      const payload = await requestActionWithRetry({ action, config, recipient, token })
       const rawValue = readString(payload[action.responseKey])
-      const message = buildMessage({
+      return buildMessage({
         action,
         config,
         index,
         recipient,
         value: rawValue || stripHtml(JSON.stringify(payload)),
       })
-      if (message) messages.push(message)
-    } catch {
-      // Keep the rest of the Spotinet actions alive if one request flakes.
-    }
-  }
+    })
+  )
+
+  const messages = settled
+    .filter((result): result is PromiseFulfilledResult<SpotinetMessage | null> => result.status === 'fulfilled')
+    .map(result => result.value)
+    .filter((message): message is SpotinetMessage => Boolean(message))
 
   return {
     messages: messages.slice(0, config.maxItems),
