@@ -3,6 +3,7 @@ import { unstable_noStore as noStore } from 'next/cache'
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { CodesAccessError, enforceCodesRecipientAccess } from '@/lib/codes-access'
+import { fetchCodeflixMessages, isCodeflixConfigured, type CodeflixMessage } from '@/lib/codes-codeflix'
 import { stripHtml } from '@/lib/lemon-parser'
 import { fetchGlowpremMessages, isGlowpremConfigured, type GlowpremMessage } from '@/lib/codes-glowprem'
 import { fetchGoatstreamMessages, isGoatstreamConfigured, type GoatstreamMessage } from '@/lib/codes-goatstream'
@@ -30,7 +31,7 @@ type ImapMessage = {
   variantLabel?: string
 }
 
-type CodeMessage = ImapMessage | GlowpremMessage | GoatstreamMessage | SdnetpanelMessage | SpotinetMessage
+type CodeMessage = ImapMessage | CodeflixMessage | GlowpremMessage | GoatstreamMessage | SdnetpanelMessage | SpotinetMessage
 
 type CodeSourceResult = {
   mailbox?: string
@@ -173,6 +174,7 @@ const getLegacyImapConfig = (): LegacyImapConfig | null => {
 const getAvailableSourcesForPlatform = (params: {
   platform: CodePlatformKey
   hasImap: boolean
+  hasCodeflix: boolean
   hasGlowprem: boolean
   hasGoatstream: boolean
   hasSdnetpanel: boolean
@@ -181,6 +183,7 @@ const getAvailableSourcesForPlatform = (params: {
   if (params.platform === 'netflix') {
     return [
       params.hasImap ? 'IMAP' : null,
+      params.hasCodeflix ? 'Codeflix' : null,
       params.hasGoatstream ? 'Goatstream' : null,
       params.hasSdnetpanel ? 'SDNetPanel' : null,
       params.hasSpotinet ? 'Spotinet' : null,
@@ -330,9 +333,7 @@ const shouldHideNetflixCode = (text: string) => {
   return /\b\d{6}\b/.test(text)
 }
 
-const dedupeMessages = (
-  messages: Array<ImapMessage | GlowpremMessage | GoatstreamMessage | SdnetpanelMessage | SpotinetMessage>
-) => {
+const dedupeMessages = (messages: CodeMessage[]) => {
   const seen = new Set<string>()
 
   return messages.filter(message => {
@@ -365,12 +366,14 @@ export async function GET(request: NextRequest) {
 
   const imapConfig = getLegacyImapConfig()
   const glowpremEnabled = selectedPlatform === 'disney' && isGlowpremConfigured()
+  const codeflixEnabled = selectedPlatform === 'netflix' && isCodeflixConfigured()
   const goatstreamEnabled = isGoatstreamConfigured()
   const sdnetpanelEnabled = isSdnetpanelConfigured()
   const spotinetEnabled = selectedPlatform === 'netflix' && isSpotinetConfigured()
   const availableSources = getAvailableSourcesForPlatform({
     platform: selectedPlatform,
     hasImap: Boolean(imapConfig),
+    hasCodeflix: codeflixEnabled,
     hasGlowprem: glowpremEnabled,
     hasGoatstream: goatstreamEnabled,
     hasSdnetpanel: sdnetpanelEnabled,
@@ -382,7 +385,7 @@ export async function GET(request: NextRequest) {
       {
         error:
           selectedPlatform === 'netflix'
-            ? 'No hay fuentes de codigos para Netflix. Configura IMAP, Goatstream, SDNetPanel o Spotinet en .env.local.'
+            ? 'No hay fuentes de codigos para Netflix. Configura IMAP, Codeflix, Goatstream, SDNetPanel o Spotinet en .env.local.'
             : selectedPlatform === 'disney'
               ? 'No hay fuentes de codigos para Disney+. Configura IMAP, Glowprem, Goatstream o SDNetPanel en .env.local.'
               : 'No hay fuentes de codigos para HBO Max. Configura IMAP o SDNetPanel en .env.local.',
@@ -457,6 +460,7 @@ export async function GET(request: NextRequest) {
       available_sources: availableSources,
       flags: {
         glowprem: glowpremEnabled,
+        codeflix: codeflixEnabled,
         goatstream: goatstreamEnabled,
         imap: Boolean(imapConfig),
         sdnetpanel: sdnetpanelEnabled,
@@ -485,6 +489,17 @@ export async function GET(request: NextRequest) {
         source: 'imap',
         totalScanned: result.messages.length,
         variantLabels: [],
+      }))
+    )
+  }
+
+  if (codeflixEnabled) {
+    tasks.push(
+      fetchCodeflixMessages({ platform: selectedPlatform, recipient }).then(result => ({
+        messages: result.messages,
+        source: 'codeflix',
+        totalScanned: result.totalScanned,
+        variantLabels: result.variantsScanned,
       }))
     )
   }

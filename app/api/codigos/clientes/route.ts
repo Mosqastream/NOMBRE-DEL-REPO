@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
+import { fetchCodeflixMessages, isCodeflixConfigured } from '@/lib/codes-codeflix'
 import { fetchSdnetpanelMessages, isSdnetpanelConfigured } from '@/lib/codes-sdnetpanel'
 import { fetchSpotinetMessages, isSpotinetConfigured } from '@/lib/codes-spotinet'
 import { getNetflixActionPayload } from '@/lib/codes-netflix-actions'
@@ -354,6 +355,44 @@ async function readSdnetpanelClientMails(recipient: string) {
   return grouped
 }
 
+async function readCodeflixClientMails(recipient: string) {
+  const grouped: Record<ClienteKind, ClienteMailResult[]> = {
+    travel: [],
+    household: [],
+  }
+
+  if (!isCodeflixConfigured()) return grouped
+
+  const result = await fetchCodeflixMessages({
+    platform: 'netflix',
+    recipient,
+  })
+
+  for (const message of result.messages) {
+    const action = getNetflixActionPayload({
+      subject: message.subject,
+      bodyText: message.bodyText,
+      bodyHtml: message.bodyHtml,
+    })
+    const kind = action.kind === 'travel' || action.kind === 'household' ? action.kind : null
+    if (!kind) continue
+
+    grouped[kind].push({
+      id: `${kind}-${message.messageId}`,
+      subject: message.subject || KIND_RULES[kind].title,
+      from: message.from,
+      receivedAt: message.date.toISOString(),
+      actionUrl: action.url,
+      actionLabel: action.label || KIND_RULES[kind].title,
+      snippet: buildSnippet(`${message.subject}\n${message.bodyText}`),
+      bodyHtml: message.bodyHtml,
+      bodyText: message.bodyText,
+    })
+  }
+
+  return grouped
+}
+
 async function readSpotinetClientMails(recipient: string) {
   const grouped: Record<ClienteKind, ClienteMailResult[]> = {
     travel: [],
@@ -412,7 +451,7 @@ export async function GET(request: NextRequest) {
       household: [],
     }
     const errors: string[] = []
-    const loaders = [readNetflixClientMails, readSdnetpanelClientMails, readSpotinetClientMails]
+    const loaders = [readNetflixClientMails, readCodeflixClientMails, readSdnetpanelClientMails, readSpotinetClientMails]
     const pending = new Map(
       loaders.map((loader, index) => [
         index,
