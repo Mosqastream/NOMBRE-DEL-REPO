@@ -14,6 +14,7 @@ import { detectCodePlatform, type CodePlatformKey, type CodePlatformMatch } from
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
+const FAST_SEARCH_TIMEOUT_MS = 20000
 
 type ImapMessage = {
   uid: number
@@ -27,6 +28,16 @@ type ImapMessage = {
   platform: CodePlatformMatch
   source: 'imap'
   variantLabel?: string
+}
+
+type CodeMessage = ImapMessage | GlowpremMessage | GoatstreamMessage | SdnetpanelMessage | SpotinetMessage
+
+type CodeSourceResult = {
+  mailbox?: string
+  messages: CodeMessage[]
+  source: string
+  totalScanned: number
+  variantLabels?: string[]
 }
 
 type LegacyImapConfig = {
@@ -464,18 +475,7 @@ export async function GET(request: NextRequest) {
     })
   }
 
-  const tasks: Array<
-    Promise<
-      | {
-          mailbox?: string
-          messages: Array<ImapMessage | GlowpremMessage | GoatstreamMessage | SdnetpanelMessage | SpotinetMessage>
-          source: string
-          totalScanned: number
-          variantLabels?: string[]
-        }
-      | null
-    >
-  > = []
+  const tasks: Array<Promise<CodeSourceResult>> = []
 
   if (imapConfig) {
     tasks.push(
@@ -533,22 +533,43 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const settled = await Promise.allSettled(tasks)
-  const successfulSources = settled
-    .filter(
-      (result): result is PromiseFulfilledResult<{
-        mailbox?: string
-        messages: Array<ImapMessage | GoatstreamMessage | SdnetpanelMessage | SpotinetMessage>
-        source: string
-        totalScanned: number
-        variantLabels?: string[]
-      }> => result.status === 'fulfilled' && Boolean(result.value)
-    )
-    .map(result => result.value)
+  const isUsefulMessage = (message: CodeMessage) =>
+    (message.source !== 'imap' || message.to.some(address => address === recipient)) &&
+    (!isNetflixRecipient(recipient) || !shouldHideNetflixCode(message.bodyText || '')) &&
+    message.platform === selectedPlatform
 
-  const failedSources = settled.filter(
-    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  const pending = new Map(
+    tasks.map((task, index) => [
+      index,
+      task.then(
+        value => ({ index, status: 'fulfilled' as const, value }),
+        reason => ({ index, status: 'rejected' as const, reason })
+      ),
+    ])
   )
+  const successfulSources: CodeSourceResult[] = []
+  const failedSources: Array<{ reason: unknown }> = []
+  let searchTimeoutId: ReturnType<typeof setTimeout> | null = null
+  const searchTimeout = new Promise<{ status: 'timeout' }>(resolve => {
+    searchTimeoutId = setTimeout(() => resolve({ status: 'timeout' }), FAST_SEARCH_TIMEOUT_MS)
+  })
+
+  while (pending.size > 0) {
+    const result = await Promise.race([...pending.values(), searchTimeout])
+    if (result.status === 'timeout') break
+
+    pending.delete(result.index)
+
+    if (result.status === 'rejected') {
+      failedSources.push(result)
+      continue
+    }
+
+    successfulSources.push(result.value)
+    if (result.value.messages.some(isUsefulMessage)) break
+  }
+
+  if (searchTimeoutId) clearTimeout(searchTimeoutId)
 
   if (successfulSources.length === 0 && failedSources.length > 0) {
     const firstError = failedSources[0].reason
@@ -559,12 +580,7 @@ export async function GET(request: NextRequest) {
   const allMessages = successfulSources.flatMap(source => source.messages)
   const deduped = dedupeMessages(allMessages)
   const filtered = deduped
-    .filter(message => (message.source === 'imap' ? message.to.some(address => address === recipient) : true))
-    .filter(message => {
-      if (!isNetflixRecipient(recipient)) return true
-      return !shouldHideNetflixCode(message.bodyText || '')
-    })
-    .filter(message => message.platform === selectedPlatform)
+    .filter(isUsefulMessage)
     .sort((a, b) => b.date.getTime() - a.date.getTime())
     .slice(0, 3)
     .map(message => {

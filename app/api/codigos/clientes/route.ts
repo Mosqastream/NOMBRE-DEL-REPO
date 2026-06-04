@@ -5,6 +5,8 @@ import { fetchSdnetpanelMessages, isSdnetpanelConfigured } from '@/lib/codes-sdn
 import { fetchSpotinetMessages, isSpotinetConfigured } from '@/lib/codes-spotinet'
 import { getNetflixActionPayload } from '@/lib/codes-netflix-actions'
 
+const FAST_SEARCH_TIMEOUT_MS = 20000
+
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
@@ -410,16 +412,38 @@ export async function GET(request: NextRequest) {
       household: [],
     }
     const errors: string[] = []
+    const loaders = [readNetflixClientMails, readSdnetpanelClientMails, readSpotinetClientMails]
+    const pending = new Map(
+      loaders.map((loader, index) => [
+        index,
+        loader(recipient).then(
+          value => ({ index, status: 'fulfilled' as const, value }),
+          reason => ({ index, status: 'rejected' as const, reason })
+        ),
+      ])
+    )
+    let searchTimeoutId: ReturnType<typeof setTimeout> | null = null
+    const searchTimeout = new Promise<{ status: 'timeout' }>(resolve => {
+      searchTimeoutId = setTimeout(() => resolve({ status: 'timeout' }), FAST_SEARCH_TIMEOUT_MS)
+    })
 
-    for (const loader of [readNetflixClientMails, readSdnetpanelClientMails, readSpotinetClientMails]) {
-      try {
-        const result = await loader(recipient)
-        grouped.travel.push(...result.travel)
-        grouped.household.push(...result.household)
-      } catch (error) {
-        errors.push(error instanceof Error ? error.message : 'Fuente no disponible.')
+    while (pending.size > 0) {
+      const result = await Promise.race([...pending.values(), searchTimeout])
+      if (result.status === 'timeout') break
+
+      pending.delete(result.index)
+
+      if (result.status === 'rejected') {
+        errors.push(result.reason instanceof Error ? result.reason.message : 'Fuente no disponible.')
+        continue
       }
+
+      grouped.travel.push(...result.value.travel)
+      grouped.household.push(...result.value.household)
+      if (result.value.travel.length > 0 || result.value.household.length > 0) break
     }
+
+    if (searchTimeoutId) clearTimeout(searchTimeoutId)
 
     if (grouped.travel.length === 0 && grouped.household.length === 0 && errors.length > 0) {
       throw new Error(errors[0])
