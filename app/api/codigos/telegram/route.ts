@@ -145,6 +145,16 @@ export async function POST(request: NextRequest) {
     }
 
     const message = error instanceof Error ? error.message : 'No se pudo completar el flujo de Telegram.'
+    if (/AUTH_KEY_(UNREGISTERED|DUPLICATED|INVALID)/i.test(message)) {
+      return NextResponse.json(
+        {
+          error:
+            'La sesion de Telegram vencio o fue invalidada. Genera una nueva TELEGRAM_SESSION_STRING y actualizala en Vercel.',
+        },
+        { status: 401 }
+      )
+    }
+
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }

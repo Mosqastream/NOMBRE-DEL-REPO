@@ -224,6 +224,19 @@ function messageToRawText(message) {
   return `[Mensaje sin texto: ${className}]`
 }
 
+function isProgressMessage(message) {
+  const normalized = messageToRawText(message)
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+
+  return (
+    normalized.includes('buscando en la bandeja') ||
+    normalized.includes('por favor espera') ||
+    normalized.includes('espera un momento')
+  )
+}
+
 function messageToIsoString(message) {
   if (message?.date instanceof Date) {
     return message.date.toISOString()
@@ -236,7 +249,7 @@ function messageToIsoString(message) {
 function findLatestIncomingMessage(messages, minMessageId) {
   return [...messages]
     .reverse()
-    .find(message => Number(message.id) > minMessageId && !message.out)
+    .find(message => Number(message.id) > minMessageId && !message.out && !isProgressMessage(message))
 }
 
 async function waitForIncomingMessage(params) {
@@ -257,9 +270,9 @@ async function waitForIncomingMessage(params) {
   return null
 }
 
-async function maybeResolveResetPasswordLink(params) {
+async function maybeResolveCopyLinkMessage(params) {
   const { botEntity, client, initialMessage } = params
-  const copyLinkButton = findButton(initialMessage, ['copiar link', 'copiar el link'])
+  const copyLinkButton = findButton(initialMessage, ['copiar link', 'copiar el link', 'copiar'])
 
   if (!copyLinkButton) {
     return initialMessage
@@ -331,22 +344,22 @@ async function runTelegramFlow(payload) {
   const emailMessage = await client.sendMessage(botEntity, { message: payload.recipient })
   const emailMessageId = Number(emailMessage.id)
 
-  await delay(WAIT_MS)
-
-  const recentMessages = await fetchRecentMessages(client, botEntity, 30)
-  let latestIncomingMessage = findLatestIncomingMessage(recentMessages, emailMessageId)
+  let latestIncomingMessage = await waitForIncomingMessage({
+    botEntity,
+    client,
+    minMessageId: emailMessageId,
+    timeoutMs: WAIT_MS,
+  })
 
   if (!latestIncomingMessage) {
     throw new Error(`No hubo un mensaje nuevo del bot despues de esperar ${WAIT_MS / 1000} segundos.`)
   }
 
-  if (payload.action === 'reset-password') {
-    latestIncomingMessage = await maybeResolveResetPasswordLink({
-      botEntity,
-      client,
-      initialMessage: latestIncomingMessage,
-    })
-  }
+  latestIncomingMessage = await maybeResolveCopyLinkMessage({
+    botEntity,
+    client,
+    initialMessage: latestIncomingMessage,
+  })
 
   return {
     action: payload.action,

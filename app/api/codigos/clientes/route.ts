@@ -5,14 +5,18 @@ import { fetchCodeflixMessages, isCodeflixConfigured } from '@/lib/codes-codefli
 import { fetchSdnetpanelMessages, isSdnetpanelConfigured } from '@/lib/codes-sdnetpanel'
 import { fetchSpotinetMessages, isSpotinetConfigured } from '@/lib/codes-spotinet'
 import { getNetflixActionPayload } from '@/lib/codes-netflix-actions'
+import { invokeDirectTelegramFlow } from '@/lib/codes-telegram-direct'
+import { isSpecialNetflixRecipient, type SpecialNetflixActionKey } from '@/lib/codes-telegram-special'
 
 const FAST_SEARCH_TIMEOUT_MS = 20000
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+export const maxDuration = 120
 
 const MAX_FETCH_MESSAGES = 140
 const NETFLIX_FROM_HINT = 'netflix'
+const TELEGRAM_CLIENT_SEARCH_TIMEOUT_MS = 90000
 
 type ClienteKind = 'travel' | 'household'
 
@@ -204,6 +208,68 @@ function buildSnippet(text: string) {
   const clean = normalizeSpaces(text)
   if (!clean) return 'Sin vista previa.'
   return clean.length > 220 ? `${clean.slice(0, 220).trim()}...` : clean
+}
+
+function extractFirstUrl(text: string) {
+  return text.match(/https?:\/\/[^\s<>"')]+/i)?.[0] ?? null
+}
+
+async function readTelegramClientMails(recipient: string) {
+  const grouped: Record<ClienteKind, ClienteMailResult[]> = {
+    travel: [],
+    household: [],
+  }
+
+  if (!isSpecialNetflixRecipient(recipient)) return grouped
+
+  const actions: Array<{ action: SpecialNetflixActionKey; kind: ClienteKind; title: string }> = [
+    { action: 'access-temporary-link', kind: 'travel', title: KIND_RULES.travel.title },
+    { action: 'update-household-link', kind: 'household', title: KIND_RULES.household.title },
+  ]
+
+  const settled = await Promise.allSettled(
+    actions.map(async item => {
+      const result = await invokeDirectTelegramFlow({
+        action: item.action,
+        recipient,
+      })
+      const actionUrl = extractFirstUrl(result.message)
+
+      return {
+        item,
+        result,
+        actionUrl,
+      }
+    })
+  )
+
+  const failed = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+
+  for (const result of settled) {
+    if (result.status !== 'fulfilled') continue
+
+    const { actionUrl, item, result: telegramResult } = result.value
+    grouped[item.kind].push({
+      id: `${item.kind}-telegram-${telegramResult.source_message_id}`,
+      subject: item.title,
+      from: telegramResult.bot_username || 'Telegram',
+      receivedAt: telegramResult.received_at,
+      actionUrl,
+      actionLabel: actionUrl ? item.title : null,
+      snippet: buildSnippet(telegramResult.message),
+      bodyHtml: actionUrl
+        ? `<p>${item.title}</p><p><a href="${actionUrl}" target="_blank" rel="noopener noreferrer">${item.title}</a></p>`
+        : `<p>${telegramResult.message}</p>`,
+      bodyText: telegramResult.message,
+    })
+  }
+
+  if (grouped.travel.length === 0 && grouped.household.length === 0 && failed.length > 0) {
+    const firstError = failed[0].reason
+    throw firstError instanceof Error ? firstError : new Error('Telegram no pudo completar la consulta.')
+  }
+
+  return grouped
 }
 
 async function readNetflixClientMails(recipient: string) {
@@ -451,7 +517,15 @@ export async function GET(request: NextRequest) {
       household: [],
     }
     const errors: string[] = []
-    const loaders = [readNetflixClientMails, readCodeflixClientMails, readSdnetpanelClientMails, readSpotinetClientMails]
+    const usesTelegram = isSpecialNetflixRecipient(recipient)
+    const loaders = usesTelegram
+      ? [readTelegramClientMails]
+      : [
+          readNetflixClientMails,
+          readCodeflixClientMails,
+          readSdnetpanelClientMails,
+          readSpotinetClientMails,
+        ]
     const pending = new Map(
       loaders.map((loader, index) => [
         index,
@@ -463,7 +537,10 @@ export async function GET(request: NextRequest) {
     )
     let searchTimeoutId: ReturnType<typeof setTimeout> | null = null
     const searchTimeout = new Promise<{ status: 'timeout' }>(resolve => {
-      searchTimeoutId = setTimeout(() => resolve({ status: 'timeout' }), FAST_SEARCH_TIMEOUT_MS)
+      searchTimeoutId = setTimeout(
+        () => resolve({ status: 'timeout' }),
+        usesTelegram ? TELEGRAM_CLIENT_SEARCH_TIMEOUT_MS : FAST_SEARCH_TIMEOUT_MS
+      )
     })
 
     while (pending.size > 0) {
