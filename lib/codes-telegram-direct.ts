@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { getSpecialNetflixAction, type SpecialNetflixActionKey } from './codes-telegram-special'
+import { getSupabaseAdmin } from './supabaseAdmin'
 
 type DirectTelegramPayload = {
   action: SpecialNetflixActionKey
@@ -14,8 +16,8 @@ type TelegramContext = {
 
 const PROJECT_ROOT = process.cwd()
 const DEFAULT_SESSION_FILE = '.telegram-bridge-session'
+const TELEGRAM_LOCK_NAME = 'netflix-telegram-bot'
 
-let telegramContextPromise: Promise<TelegramContext> | null = null
 let queueTail = Promise.resolve<unknown>(undefined)
 
 const normalizeText = (value: unknown) => String(value || '').trim()
@@ -50,10 +52,10 @@ const getSessionString = () => {
   return ''
 }
 
-async function ensureTelegramContext() {
-  if (telegramContextPromise) return telegramContextPromise
+async function createTelegramContext() {
+  let client: any = null
 
-  telegramContextPromise = (async () => {
+  try {
     const apiId = readNumberEnv('TELEGRAM_API_ID', 0)
     const apiHash = normalizeText(process.env.TELEGRAM_API_HASH)
     const sessionString = getSessionString()
@@ -72,7 +74,7 @@ async function ensureTelegramContext() {
       import('telegram/sessions'),
     ])
 
-    const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, {
+    client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, {
       connectionRetries: 3,
     })
 
@@ -83,12 +85,56 @@ async function ensureTelegramContext() {
       botEntity,
       client,
     }
-  })().catch(error => {
-    telegramContextPromise = null
+  } catch (error) {
+    if (client) {
+      try {
+        await client.disconnect()
+      } catch {
+        // Ignore cleanup errors and preserve the original Telegram error.
+      }
+    }
     throw error
-  })
+  }
+}
 
-  return telegramContextPromise
+async function acquireTelegramLease() {
+  const supabaseAdmin = getSupabaseAdmin()
+  const leaseToken = randomUUID()
+  const waitMs = readNumberEnv('TELEGRAM_LOCK_WAIT_MS', 110000)
+  const leaseSeconds = readNumberEnv('TELEGRAM_LOCK_LEASE_SECONDS', 180)
+  const pollMs = readNumberEnv('TELEGRAM_LOCK_POLL_MS', 750)
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < waitMs) {
+    const result = await (supabaseAdmin as any).rpc('acquire_telegram_flow_lock', {
+      p_lock_name: TELEGRAM_LOCK_NAME,
+      p_lease_token: leaseToken,
+      p_lease_seconds: leaseSeconds,
+    })
+
+    if (result.error) {
+      if (/acquire_telegram_flow_lock|schema cache|could not find/i.test(result.error.message)) {
+        throw new Error('Falta ejecutar sql/010_telegram_flow_lock.sql en Supabase.')
+      }
+      throw new Error(`No se pudo reservar Telegram: ${result.error.message}`)
+    }
+
+    if (result.data === true) {
+      return leaseToken
+    }
+
+    await delay(pollMs)
+  }
+
+  throw new Error('Telegram esta atendiendo otra solicitud. Intenta nuevamente en unos segundos.')
+}
+
+async function releaseTelegramLease(leaseToken: string) {
+  const supabaseAdmin = getSupabaseAdmin()
+  await (supabaseAdmin as any).rpc('release_telegram_flow_lock', {
+    p_lock_name: TELEGRAM_LOCK_NAME,
+    p_lease_token: leaseToken,
+  })
 }
 
 async function fetchRecentMessages(client: any, botEntity: unknown, limit = 20) {
@@ -223,78 +269,98 @@ async function runDirectTelegramFlow(payload: DirectTelegramPayload) {
     throw new Error('La accion pedida no existe en Telegram.')
   }
 
-  const { botEntity, client } = await ensureTelegramContext()
-  const menuTimeoutMs = readNumberEnv('TELEGRAM_BRIDGE_MENU_TIMEOUT_MS', 15000)
-  const waitMs = readNumberEnv('TELEGRAM_BRIDGE_WAIT_MS', 15000)
-  const settleMs = readNumberEnv('TELEGRAM_BRIDGE_POST_CLICK_SETTLE_MS', 150)
-  const botUsername = normalizeText(process.env.TELEGRAM_BRIDGE_BOT_USERNAME) || '@tutiendastore_bot'
+  const leaseToken = await acquireTelegramLease()
+  let context: TelegramContext | null = null
 
-  const startMessage = await client.sendMessage(botEntity, { message: '/start' })
+  try {
+    context = await createTelegramContext()
+    const { botEntity, client } = context
+    const menuTimeoutMs = readNumberEnv('TELEGRAM_BRIDGE_MENU_TIMEOUT_MS', 15000)
+    const waitMs = readNumberEnv('TELEGRAM_BRIDGE_WAIT_MS', 15000)
+    const settleMs = readNumberEnv('TELEGRAM_BRIDGE_POST_CLICK_SETTLE_MS', 150)
+    const botUsername = normalizeText(process.env.TELEGRAM_BRIDGE_BOT_USERNAME) || '@tutiendastore_bot'
 
-  const platformMenu = await waitForButtonMessage({
-    actionLabel: 'Netflix',
-    botEntity,
-    client,
-    minMessageId: Number((startMessage as any).id),
-    needles: ['netflix'],
-    timeoutMs: menuTimeoutMs,
-  })
+    const startMessage = await client.sendMessage(botEntity, { message: '/start' })
 
-  const netflixButton = findButton(platformMenu, ['netflix'])
-  if (!netflixButton) {
-    throw new Error('No se encontro el boton de Netflix.')
-  }
+    const platformMenu = await waitForButtonMessage({
+      actionLabel: 'Netflix',
+      botEntity,
+      client,
+      minMessageId: Number((startMessage as any).id),
+      needles: ['netflix'],
+      timeoutMs: menuTimeoutMs,
+    })
 
-  await netflixButton.click({})
-  if (settleMs > 0) await delay(settleMs)
+    const netflixButton = findButton(platformMenu, ['netflix'])
+    if (!netflixButton) {
+      throw new Error('No se encontro el boton de Netflix.')
+    }
 
-  const actionMenu = await waitForButtonMessage({
-    actionLabel: action.label,
-    botEntity,
-    client,
-    minMessageId: Number((platformMenu as any).id),
-    needles: action.buttonNeedles,
-    timeoutMs: menuTimeoutMs,
-  })
+    await netflixButton.click({})
+    if (settleMs > 0) await delay(settleMs)
 
-  const actionButton = findButton(actionMenu, action.buttonNeedles)
-  if (!actionButton) {
-    throw new Error(`No se encontro el boton para "${action.label}".`)
-  }
+    const actionMenu = await waitForButtonMessage({
+      actionLabel: action.label,
+      botEntity,
+      client,
+      minMessageId: Number((platformMenu as any).id),
+      needles: action.buttonNeedles,
+      timeoutMs: menuTimeoutMs,
+    })
 
-  await actionButton.click({})
-  if (settleMs > 0) await delay(settleMs)
+    const actionButton = findButton(actionMenu, action.buttonNeedles)
+    if (!actionButton) {
+      throw new Error(`No se encontro el boton para "${action.label}".`)
+    }
 
-  const emailMessage = await client.sendMessage(botEntity, { message: payload.recipient })
-  const emailMessageId = Number((emailMessage as any).id)
+    await actionButton.click({})
+    if (settleMs > 0) await delay(settleMs)
 
-  let latestIncomingMessage = await waitForIncomingMessage({
-    botEntity,
-    client,
-    minMessageId: emailMessageId,
-    timeoutMs: waitMs,
-  })
+    const emailMessage = await client.sendMessage(botEntity, { message: payload.recipient })
+    const emailMessageId = Number((emailMessage as any).id)
 
-  if (!latestIncomingMessage) {
-    throw new Error(`No hubo un mensaje nuevo del bot despues de esperar ${waitMs / 1000} segundos.`)
-  }
+    let latestIncomingMessage = await waitForIncomingMessage({
+      botEntity,
+      client,
+      minMessageId: emailMessageId,
+      timeoutMs: waitMs,
+    })
 
-  latestIncomingMessage = await maybeResolveCopyLinkMessage({
-    botEntity,
-    client,
-    initialMessage: latestIncomingMessage,
-  })
+    if (!latestIncomingMessage) {
+      throw new Error(`No hubo un mensaje nuevo del bot despues de esperar ${waitMs / 1000} segundos.`)
+    }
 
-  return {
-    action: payload.action,
-    action_label: action.label,
-    bot_username: botUsername,
-    message: messageToRawText(latestIncomingMessage),
-    platform: 'netflix' as const,
-    received_at: messageToIsoString(latestIncomingMessage),
-    recipient: payload.recipient,
-    source_message_id: Number((latestIncomingMessage as any).id),
-    wait_ms: waitMs,
+    latestIncomingMessage = await maybeResolveCopyLinkMessage({
+      botEntity,
+      client,
+      initialMessage: latestIncomingMessage,
+    })
+
+    return {
+      action: payload.action,
+      action_label: action.label,
+      bot_username: botUsername,
+      message: messageToRawText(latestIncomingMessage),
+      platform: 'netflix' as const,
+      received_at: messageToIsoString(latestIncomingMessage),
+      recipient: payload.recipient,
+      source_message_id: Number((latestIncomingMessage as any).id),
+      wait_ms: waitMs,
+    }
+  } finally {
+    if (context?.client) {
+      try {
+        await context.client.disconnect()
+      } catch {
+        // The lease still must be released if Telegram disconnect fails.
+      }
+    }
+
+    try {
+      await releaseTelegramLease(leaseToken)
+    } catch {
+      // The lease expires automatically if releasing it fails.
+    }
   }
 }
 

@@ -24,3 +24,7 @@ update public.profiles
 set role = 'owner'
 where username = 'tu_username';
 ```
+
+Para evitar que varias funciones de Vercel usen la misma sesion de Telegram al mismo tiempo,
+ejecuta tambien `010_telegram_flow_lock.sql`. Este archivo crea un candado global con vencimiento
+automatico y no expone acceso a usuarios normales.

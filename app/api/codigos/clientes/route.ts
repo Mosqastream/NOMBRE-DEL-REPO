@@ -13,6 +13,7 @@ const FAST_SEARCH_TIMEOUT_MS = 20000
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
+export const preferredRegion = 'iad1'
 
 const MAX_FETCH_MESSAGES = 140
 const NETFLIX_FROM_HINT = 'netflix'

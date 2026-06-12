@@ -10,6 +10,7 @@ import { invokeDirectTelegramFlow } from '@/lib/codes-telegram-direct'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
+export const preferredRegion = 'iad1'
 
 const BRIDGE_TIMEOUT_MS = 115000
 
