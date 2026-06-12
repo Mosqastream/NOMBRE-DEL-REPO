@@ -304,12 +304,43 @@ async function readNetflixClientMails(recipient: string) {
       client.mailbox && typeof client.mailbox === 'object' && 'exists' in client.mailbox ? client.mailbox.exists : 0
     )
     const startSeq = Math.max(1, totalMessages - MAX_FETCH_MESSAGES + 1)
-    const fetchRange = totalMessages > 0 ? `${startSeq}:${totalMessages}` : '1:*'
+    const recentSequences = Array.from(
+      { length: Math.max(0, totalMessages - startSeq + 1) },
+      (_, index) => startSeq + index
+    )
+    let forwardedSequences: number[] = []
+
+    try {
+      const matches = await client.search({
+        or: [
+          { header: { 'x-forwarded-for': recipient } },
+          { header: { 'x-forwarded-to': recipient } },
+          { header: { 'x-original-to': recipient } },
+          { header: { 'x-envelope-to': recipient } },
+          { header: { 'resent-to': recipient } },
+          { header: { 'apparently-to': recipient } },
+        ],
+      })
+      forwardedSequences = Array.isArray(matches) ? matches.slice(-MAX_FETCH_MESSAGES) : []
+    } catch {
+      forwardedSequences = []
+    }
+
+    const fetchRange =
+      totalMessages > 0
+        ? Array.from(new Set([...recentSequences, ...forwardedSequences])).sort((a, b) => a - b)
+        : '1:*'
 
     const rows: Array<{
       envelopeFrom: string
       parsedTo: string
       deliveredTo: string
+      forwardedFor: string
+      forwardedTo: string
+      originalTo: string
+      envelopeTo: string
+      resentTo: string
+      apparentlyTo: string
       subject: string
       text: string
       html: string
@@ -330,6 +361,12 @@ async function readNetflixClientMails(recipient: string) {
       const text = toText(parsed.text)
       const parsedTo = normalizeSpaces(readAddressText(parsed.to)).toLowerCase()
       const deliveredTo = normalizeSpaces(toText(parsed.headers.get('delivered-to'))).toLowerCase()
+      const forwardedFor = normalizeSpaces(toText(parsed.headers.get('x-forwarded-for'))).toLowerCase()
+      const forwardedTo = normalizeSpaces(toText(parsed.headers.get('x-forwarded-to'))).toLowerCase()
+      const originalTo = normalizeSpaces(toText(parsed.headers.get('x-original-to'))).toLowerCase()
+      const envelopeTo = normalizeSpaces(toText(parsed.headers.get('x-envelope-to'))).toLowerCase()
+      const resentTo = normalizeSpaces(toText(parsed.headers.get('resent-to'))).toLowerCase()
+      const apparentlyTo = normalizeSpaces(toText(parsed.headers.get('apparently-to'))).toLowerCase()
       const envelopeFrom = normalizeSpaces(
         readAddressText(parsed.from) || message.envelope?.from?.map(item => item.address || item.name || '').join(' ') || ''
       ).toLowerCase()
@@ -338,6 +375,12 @@ async function readNetflixClientMails(recipient: string) {
         envelopeFrom,
         parsedTo,
         deliveredTo,
+        forwardedFor,
+        forwardedTo,
+        originalTo,
+        envelopeTo,
+        resentTo,
+        apparentlyTo,
         subject,
         text,
         html,
@@ -355,7 +398,16 @@ async function readNetflixClientMails(recipient: string) {
     })
 
     for (const row of rows) {
-      const destinationText = `${row.parsedTo}\n${row.deliveredTo}`
+      const destinationText = [
+        row.parsedTo,
+        row.deliveredTo,
+        row.forwardedFor,
+        row.forwardedTo,
+        row.originalTo,
+        row.envelopeTo,
+        row.resentTo,
+        row.apparentlyTo,
+      ].join('\n')
       if (!destinationText.includes(recipient)) continue
       if (!row.envelopeFrom.includes(NETFLIX_FROM_HINT)) continue
 

@@ -371,7 +371,8 @@ export function CodigosWorkspace({ embedded = false }: CodigosPageProps) {
               <h1>Codigos automaticos</h1>
               <p>
                 Elige la plataforma y luego ingresa el correo destino para ver los ultimos mensajes. Los
-                correos con codigos de cambio de cuenta de Netflix se omiten automaticamente.
+                correos de cambio de cuenta de Netflix se ocultan en cuentas `netflix*`, pero los
+                `@cryxteam.com` tambien pueden mostrarse.
               </p>
             </div>
 

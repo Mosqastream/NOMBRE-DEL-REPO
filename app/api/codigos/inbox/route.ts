@@ -216,7 +216,31 @@ const getImapClient = (config: LegacyImapConfig) =>
     },
   })
 
-const fetchMessages = async (client: ImapFlow, mailboxName: string, maxMessages: number) => {
+const findForwardedMessageSequences = async (client: ImapFlow, recipient: string, limit: number) => {
+  try {
+    const matches = await client.search({
+      or: [
+        { header: { 'x-forwarded-for': recipient } },
+        { header: { 'x-forwarded-to': recipient } },
+        { header: { 'x-original-to': recipient } },
+        { header: { 'x-envelope-to': recipient } },
+        { header: { 'resent-to': recipient } },
+        { header: { 'apparently-to': recipient } },
+      ],
+    })
+
+    return Array.isArray(matches) ? matches.slice(-limit) : []
+  } catch {
+    return []
+  }
+}
+
+const fetchMessages = async (
+  client: ImapFlow,
+  mailboxName: string,
+  maxMessages: number,
+  recipient: string
+) => {
   const safeMaxMessages = Number.isFinite(maxMessages) ? Math.max(1, maxMessages) : 50
   const lock = await client.getMailboxLock(mailboxName)
 
@@ -234,7 +258,9 @@ const fetchMessages = async (client: ImapFlow, mailboxName: string, maxMessages:
     }
 
     const start = Math.max(1, total - safeMaxMessages + 1)
-    const sequence = `${start}:${total}`
+    const recentSequences = Array.from({ length: total - start + 1 }, (_, index) => start + index)
+    const forwardedSequences = await findForwardedMessageSequences(client, recipient, safeMaxMessages)
+    const sequence = Array.from(new Set([...recentSequences, ...forwardedSequences])).sort((a, b) => a - b)
     const messages: ImapMessage[] = []
 
     for await (const msg of client.fetch(sequence, {
@@ -266,6 +292,10 @@ const fetchMessages = async (client: ImapFlow, mailboxName: string, maxMessages:
       const deliveredTo = parsed.headers.get('delivered-to')
       const originalTo = parsed.headers.get('x-original-to')
       const envelopeTo = parsed.headers.get('x-envelope-to')
+      const forwardedFor = parsed.headers.get('x-forwarded-for')
+      const forwardedTo = parsed.headers.get('x-forwarded-to')
+      const resentTo = parsed.headers.get('resent-to')
+      const apparentlyTo = parsed.headers.get('apparently-to')
 
       const recipients = new Set<string>()
       const toList = addressValueToList(parsed.to)
@@ -279,6 +309,10 @@ const fetchMessages = async (client: ImapFlow, mailboxName: string, maxMessages:
         headerValueToText(deliveredTo),
         headerValueToText(originalTo),
         headerValueToText(envelopeTo),
+        headerValueToText(forwardedFor),
+        headerValueToText(forwardedTo),
+        headerValueToText(resentTo),
+        headerValueToText(apparentlyTo),
       ]).forEach(email => recipients.add(email))
 
       messages.push({
@@ -301,13 +335,13 @@ const fetchMessages = async (client: ImapFlow, mailboxName: string, maxMessages:
   }
 }
 
-const fetchImapMessages = async (config: LegacyImapConfig) => {
+const fetchImapMessages = async (config: LegacyImapConfig, recipient: string) => {
   let imapClient: ImapFlow | null = null
 
   try {
     imapClient = getImapClient(config)
     await imapClient.connect()
-    const result = await fetchMessages(imapClient, config.mailbox, config.maxMessages)
+    const result = await fetchMessages(imapClient, config.mailbox, config.maxMessages, recipient)
     await imapClient.logout()
     return result
   } catch (error) {
@@ -325,6 +359,11 @@ const fetchImapMessages = async (config: LegacyImapConfig) => {
 const isNetflixRecipient = (recipient: string) => {
   const local = recipient.split('@')[0]?.toLowerCase() || ''
   return local.startsWith('netflix')
+}
+
+const isCryxteamRecipient = (recipient: string) => {
+  const domain = recipient.split('@')[1]?.toLowerCase() || ''
+  return domain === 'cryxteam.com'
 }
 
 const shouldHideNetflixCode = (text: string) => {
@@ -483,7 +522,7 @@ export async function GET(request: NextRequest) {
 
   if (imapConfig) {
     tasks.push(
-      fetchImapMessages(imapConfig).then(result => ({
+      fetchImapMessages(imapConfig, recipient).then(result => ({
         mailbox: result.mailbox,
         messages: result.messages,
         source: 'imap',
@@ -548,10 +587,15 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const isUsefulMessage = (message: CodeMessage) =>
-    (message.source !== 'imap' || message.to.some(address => address === recipient)) &&
-    (!isNetflixRecipient(recipient) || !shouldHideNetflixCode(message.bodyText || '')) &&
-    message.platform === selectedPlatform
+  const isUsefulMessage = (message: CodeMessage) => {
+    const recipientMatches =
+      message.source !== 'imap' || message.to.some(address => address === recipient)
+
+    const shouldHideForRecipient =
+      isNetflixRecipient(recipient) && !isCryxteamRecipient(recipient) && shouldHideNetflixCode(message.bodyText || '')
+
+    return recipientMatches && !shouldHideForRecipient && message.platform === selectedPlatform
+  }
 
   const pending = new Map(
     tasks.map((task, index) => [
