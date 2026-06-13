@@ -7,6 +7,11 @@ import { fetchCodeflixMessages, isCodeflixConfigured, type CodeflixMessage } fro
 import { stripHtml } from '@/lib/lemon-parser'
 import { fetchGlowpremMessages, isGlowpremConfigured, type GlowpremMessage } from '@/lib/codes-glowprem'
 import { fetchGoatstreamMessages, isGoatstreamConfigured, type GoatstreamMessage } from '@/lib/codes-goatstream'
+import {
+  fetchJhafashionMessages,
+  isJhafashionConfigured,
+  type JhafashionMessage,
+} from '@/lib/codes-jhafashion'
 import { getNetflixActionPayload } from '@/lib/codes-netflix-actions'
 import { fetchSdnetpanelMessages, isSdnetpanelConfigured, type SdnetpanelMessage } from '@/lib/codes-sdnetpanel'
 import { fetchSpotinetMessages, isSpotinetConfigured, type SpotinetMessage } from '@/lib/codes-spotinet'
@@ -31,7 +36,14 @@ type ImapMessage = {
   variantLabel?: string
 }
 
-type CodeMessage = ImapMessage | CodeflixMessage | GlowpremMessage | GoatstreamMessage | SdnetpanelMessage | SpotinetMessage
+type CodeMessage =
+  | ImapMessage
+  | CodeflixMessage
+  | GlowpremMessage
+  | GoatstreamMessage
+  | JhafashionMessage
+  | SdnetpanelMessage
+  | SpotinetMessage
 
 type CodeSourceResult = {
   mailbox?: string
@@ -177,6 +189,7 @@ const getAvailableSourcesForPlatform = (params: {
   hasCodeflix: boolean
   hasGlowprem: boolean
   hasGoatstream: boolean
+  hasJhafashion: boolean
   hasSdnetpanel: boolean
   hasSpotinet: boolean
 }) => {
@@ -185,6 +198,7 @@ const getAvailableSourcesForPlatform = (params: {
       params.hasImap ? 'IMAP' : null,
       params.hasCodeflix ? 'Codeflix' : null,
       params.hasGoatstream ? 'Goatstream' : null,
+      params.hasJhafashion ? 'JHA Fashion' : null,
       params.hasSdnetpanel ? 'SDNetPanel' : null,
       params.hasSpotinet ? 'Spotinet' : null,
     ].filter(Boolean) as string[]
@@ -407,6 +421,7 @@ export async function GET(request: NextRequest) {
   const glowpremEnabled = selectedPlatform === 'disney' && isGlowpremConfigured()
   const codeflixEnabled = selectedPlatform === 'netflix' && isCodeflixConfigured()
   const goatstreamEnabled = isGoatstreamConfigured()
+  const jhafashionEnabled = selectedPlatform === 'netflix' && isJhafashionConfigured()
   const sdnetpanelEnabled = isSdnetpanelConfigured()
   const spotinetEnabled = selectedPlatform === 'netflix' && isSpotinetConfigured()
   const availableSources = getAvailableSourcesForPlatform({
@@ -415,6 +430,7 @@ export async function GET(request: NextRequest) {
     hasCodeflix: codeflixEnabled,
     hasGlowprem: glowpremEnabled,
     hasGoatstream: goatstreamEnabled,
+    hasJhafashion: jhafashionEnabled,
     hasSdnetpanel: sdnetpanelEnabled,
     hasSpotinet: spotinetEnabled,
   })
@@ -501,6 +517,7 @@ export async function GET(request: NextRequest) {
         glowprem: glowpremEnabled,
         codeflix: codeflixEnabled,
         goatstream: goatstreamEnabled,
+        jhafashion: jhafashionEnabled,
         imap: Boolean(imapConfig),
         sdnetpanel: sdnetpanelEnabled,
         spotinet: spotinetEnabled,
@@ -561,6 +578,17 @@ export async function GET(request: NextRequest) {
         source: 'goatstream',
         totalScanned: result.totalScanned,
         variantLabels: [],
+      }))
+    )
+  }
+
+  if (jhafashionEnabled) {
+    tasks.push(
+      fetchJhafashionMessages({ platform: selectedPlatform, recipient }).then(result => ({
+        messages: result.messages,
+        source: 'jhafashion',
+        totalScanned: result.totalScanned,
+        variantLabels: result.variantsScanned,
       }))
     )
   }
