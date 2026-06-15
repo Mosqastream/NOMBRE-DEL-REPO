@@ -20,7 +20,7 @@ const MAX_FETCH_MESSAGES = 140
 const NETFLIX_FROM_HINT = 'netflix'
 const TELEGRAM_CLIENT_SEARCH_TIMEOUT_MS = 90000
 
-type ClienteKind = 'travel' | 'household'
+type ClienteKind = 'travel' | 'household' | 'login'
 
 type ClienteMailResult = {
   id: string
@@ -54,6 +54,12 @@ const KIND_RULES: Record<
     subjectPatterns: [/actualizar tu hogar/i, /actualizar hogar/i],
     bodyPatterns: [/actualizar el hogar/i, /tu hogar con netflix/i, /si, la envie yo/i, /sí, la envié yo/i],
     linkLabels: [/si, la envie yo/i, /sí, la envié yo/i, /aprobar/i],
+  },
+  login: {
+    title: 'Codigo 6 digitos',
+    subjectPatterns: [/codigo de inicio de sesion/i, /cÃ³digo de inicio de sesiÃ³n/i],
+    bodyPatterns: [/ingresa este codigo/i, /ingresa este cÃ³digo/i, /iniciar sesion/i, /iniciar sesiÃ³n/i, /\b(?:\d\s*){6}\b/],
+    linkLabels: [],
   },
 }
 
@@ -206,6 +212,14 @@ function matchesKind(kind: ClienteKind, subject: string, text: string) {
   return subjectMatch || bodyMatch
 }
 
+function inferClienteKind(subject: string, text: string): ClienteKind | null {
+  for (const kind of Object.keys(KIND_RULES) as ClienteKind[]) {
+    if (matchesKind(kind, subject, text)) return kind
+  }
+
+  return null
+}
+
 function buildSnippet(text: string) {
   const clean = normalizeSpaces(text)
   if (!clean) return 'Sin vista previa.'
@@ -220,6 +234,7 @@ async function readTelegramClientMails(recipient: string) {
   const grouped: Record<ClienteKind, ClienteMailResult[]> = {
     travel: [],
     household: [],
+    login: [],
   }
 
   if (!isSpecialNetflixRecipient(recipient)) return grouped
@@ -227,6 +242,7 @@ async function readTelegramClientMails(recipient: string) {
   const actions: Array<{ action: SpecialNetflixActionKey; kind: ClienteKind; title: string }> = [
     { action: 'access-temporary-link', kind: 'travel', title: KIND_RULES.travel.title },
     { action: 'update-household-link', kind: 'household', title: KIND_RULES.household.title },
+    { action: 'login-code', kind: 'login', title: KIND_RULES.login.title },
   ]
 
   const settled = await Promise.allSettled(
@@ -266,7 +282,7 @@ async function readTelegramClientMails(recipient: string) {
     })
   }
 
-  if (grouped.travel.length === 0 && grouped.household.length === 0 && failed.length > 0) {
+  if (grouped.travel.length === 0 && grouped.household.length === 0 && grouped.login.length === 0 && failed.length > 0) {
     const firstError = failed[0].reason
     throw firstError instanceof Error ? firstError : new Error('Telegram no pudo completar la consulta.')
   }
@@ -295,6 +311,7 @@ async function readNetflixClientMails(recipient: string) {
   const grouped: Record<ClienteKind, ClienteMailResult[]> = {
     travel: [],
     household: [],
+    login: [],
   }
 
   try {
@@ -422,8 +439,8 @@ async function readNetflixClientMails(recipient: string) {
           subject: row.subject || KIND_RULES[kind].title,
           from: row.envelopeFrom,
           receivedAt: row.receivedAt,
-          actionUrl: action.url,
-          actionLabel: action.label,
+          actionUrl: kind === 'login' ? null : action.url,
+          actionLabel: kind === 'login' ? null : action.label,
           snippet: buildSnippet(mergedText),
           bodyHtml: row.html,
           bodyText: row.text || mergedText,
@@ -441,6 +458,7 @@ async function readSdnetpanelClientMails(recipient: string) {
   const grouped: Record<ClienteKind, ClienteMailResult[]> = {
     travel: [],
     household: [],
+    login: [],
   }
 
   if (!isSdnetpanelConfigured()) return grouped
@@ -456,7 +474,10 @@ async function readSdnetpanelClientMails(recipient: string) {
       bodyText: message.bodyText,
       bodyHtml: message.bodyHtml,
     })
-    const kind = action.kind === 'travel' || action.kind === 'household' ? action.kind : null
+    const kind =
+      action.kind === 'travel' || action.kind === 'household'
+        ? action.kind
+        : inferClienteKind(message.subject, `${message.subject}\n${message.bodyText}\n${message.bodyHtml}`)
     if (!kind) continue
 
     grouped[kind].push({
@@ -464,8 +485,8 @@ async function readSdnetpanelClientMails(recipient: string) {
       subject: message.subject || KIND_RULES[kind].title,
       from: message.from,
       receivedAt: message.date.toISOString(),
-      actionUrl: action.url,
-      actionLabel: action.label || KIND_RULES[kind].title,
+      actionUrl: kind === 'login' ? null : action.url,
+      actionLabel: kind === 'login' ? null : action.label || KIND_RULES[kind].title,
       snippet: buildSnippet(`${message.subject}\n${message.bodyText}`),
       bodyHtml: message.bodyHtml,
       bodyText: message.bodyText,
@@ -479,6 +500,7 @@ async function readCodeflixClientMails(recipient: string) {
   const grouped: Record<ClienteKind, ClienteMailResult[]> = {
     travel: [],
     household: [],
+    login: [],
   }
 
   if (!isCodeflixConfigured()) return grouped
@@ -494,7 +516,10 @@ async function readCodeflixClientMails(recipient: string) {
       bodyText: message.bodyText,
       bodyHtml: message.bodyHtml,
     })
-    const kind = action.kind === 'travel' || action.kind === 'household' ? action.kind : null
+    const kind =
+      action.kind === 'travel' || action.kind === 'household'
+        ? action.kind
+        : inferClienteKind(message.subject, `${message.subject}\n${message.bodyText}\n${message.bodyHtml}`)
     if (!kind) continue
 
     grouped[kind].push({
@@ -502,8 +527,8 @@ async function readCodeflixClientMails(recipient: string) {
       subject: message.subject || KIND_RULES[kind].title,
       from: message.from,
       receivedAt: message.date.toISOString(),
-      actionUrl: action.url,
-      actionLabel: action.label || KIND_RULES[kind].title,
+      actionUrl: kind === 'login' ? null : action.url,
+      actionLabel: kind === 'login' ? null : action.label || KIND_RULES[kind].title,
       snippet: buildSnippet(`${message.subject}\n${message.bodyText}`),
       bodyHtml: message.bodyHtml,
       bodyText: message.bodyText,
@@ -517,6 +542,7 @@ async function readJhafashionClientMails(recipient: string) {
   const grouped: Record<ClienteKind, ClienteMailResult[]> = {
     travel: [],
     household: [],
+    login: [],
   }
 
   if (!isJhafashionConfigured()) return grouped
@@ -532,7 +558,10 @@ async function readJhafashionClientMails(recipient: string) {
       bodyText: message.bodyText,
       bodyHtml: message.bodyHtml,
     })
-    const kind = action.kind === 'travel' || action.kind === 'household' ? action.kind : null
+    const kind =
+      action.kind === 'travel' || action.kind === 'household'
+        ? action.kind
+        : inferClienteKind(message.subject, `${message.subject}\n${message.bodyText}\n${message.bodyHtml}`)
     if (!kind) continue
 
     grouped[kind].push({
@@ -540,8 +569,8 @@ async function readJhafashionClientMails(recipient: string) {
       subject: message.subject || KIND_RULES[kind].title,
       from: message.from,
       receivedAt: message.date.toISOString(),
-      actionUrl: action.url,
-      actionLabel: action.label || KIND_RULES[kind].title,
+      actionUrl: kind === 'login' ? null : action.url,
+      actionLabel: kind === 'login' ? null : action.label || KIND_RULES[kind].title,
       snippet: buildSnippet(`${message.subject}\n${message.bodyText}`),
       bodyHtml: message.bodyHtml,
       bodyText: message.bodyText,
@@ -555,6 +584,7 @@ async function readSpotinetClientMails(recipient: string) {
   const grouped: Record<ClienteKind, ClienteMailResult[]> = {
     travel: [],
     household: [],
+    login: [],
   }
 
   if (!isSpotinetConfigured()) return grouped
@@ -573,10 +603,16 @@ async function readSpotinetClientMails(recipient: string) {
     const isCombinedHomeOrTravel = /actualizar hogar|estoy de viaje|acceso temporal/i.test(
       `${message.subject}\n${message.variantLabel}\n${message.bodyText}`
     )
+    const inferredKind = inferClienteKind(
+      message.subject,
+      `${message.subject}\n${message.variantLabel}\n${message.bodyText}\n${message.bodyHtml}`
+    )
     const kinds: ClienteKind[] = isCombinedHomeOrTravel
       ? ['travel', 'household']
       : action.kind === 'travel' || action.kind === 'household'
         ? [action.kind]
+        : inferredKind
+          ? [inferredKind]
         : []
 
     for (const kind of kinds) {
@@ -585,8 +621,8 @@ async function readSpotinetClientMails(recipient: string) {
         subject: message.subject || KIND_RULES[kind].title,
         from: message.from,
         receivedAt: message.date.toISOString(),
-        actionUrl: action.url,
-        actionLabel: action.label || KIND_RULES[kind].title,
+        actionUrl: kind === 'login' ? null : action.url,
+        actionLabel: kind === 'login' ? null : action.label || KIND_RULES[kind].title,
         snippet: buildSnippet(`${message.subject}\n${message.bodyText}`),
         bodyHtml: message.bodyHtml,
         bodyText: message.bodyText,
@@ -607,6 +643,7 @@ export async function GET(request: NextRequest) {
     const grouped: Record<ClienteKind, ClienteMailResult[]> = {
       travel: [],
       household: [],
+      login: [],
     }
     const errors: string[] = []
     const usesTelegram = isSpecialNetflixRecipient(recipient)
@@ -649,12 +686,13 @@ export async function GET(request: NextRequest) {
 
       grouped.travel.push(...result.value.travel)
       grouped.household.push(...result.value.household)
-      if (result.value.travel.length > 0 || result.value.household.length > 0) break
+      grouped.login.push(...result.value.login)
+      if (result.value.travel.length > 0 || result.value.household.length > 0 || result.value.login.length > 0) break
     }
 
     if (searchTimeoutId) clearTimeout(searchTimeoutId)
 
-    if (grouped.travel.length === 0 && grouped.household.length === 0 && errors.length > 0) {
+    if (grouped.travel.length === 0 && grouped.household.length === 0 && grouped.login.length === 0 && errors.length > 0) {
       throw new Error(errors[0])
     }
 
@@ -664,6 +702,9 @@ export async function GET(request: NextRequest) {
         .sort((a, b) => new Date(b.receivedAt || 0).getTime() - new Date(a.receivedAt || 0).getTime())
         .slice(0, 8),
       household: grouped.household
+        .sort((a, b) => new Date(b.receivedAt || 0).getTime() - new Date(a.receivedAt || 0).getTime())
+        .slice(0, 8),
+      login: grouped.login
         .sort((a, b) => new Date(b.receivedAt || 0).getTime() - new Date(a.receivedAt || 0).getTime())
         .slice(0, 8),
     })

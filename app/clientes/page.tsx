@@ -19,9 +19,16 @@ type ClienteInboxPayload = {
   recipient: string
   travel: ClienteMailResult[]
   household: ClienteMailResult[]
+  login: ClienteMailResult[]
 }
 
-type ClienteViewKind = 'travel' | 'household'
+type ClienteViewKind = 'travel' | 'household' | 'login'
+
+const CLIENTE_KIND_LABELS: Record<ClienteViewKind, string> = {
+  travel: 'Estoy de viaje',
+  household: 'Actualizar hogar',
+  login: 'Codigo 6 digitos',
+}
 
 function normalizeRecipient(rawValue: string) {
   return rawValue.trim().toLowerCase()
@@ -57,8 +64,7 @@ export default function ClientesPage() {
   const [copied, setCopied] = useState(false)
 
   const normalizedRecipient = useMemo(() => normalizeRecipient(recipientInput), [recipientInput])
-  const selectedItem =
-    selectedKind === 'travel' ? payload?.travel?.[0] ?? null : payload?.household?.[0] ?? null
+  const selectedItem = payload?.[selectedKind]?.[0] ?? null
 
   const iframeDoc = selectedItem?.bodyHtml
     ? `<!doctype html>
@@ -106,6 +112,7 @@ export default function ClientesPage() {
         recipient: String(data.recipient || recipient),
         travel: Array.isArray(data.travel) ? data.travel : [],
         household: Array.isArray(data.household) ? data.household : [],
+        login: Array.isArray(data.login) ? data.login : [],
       })
     } catch (searchError) {
       setPayload(null)
@@ -170,6 +177,13 @@ export default function ClientesPage() {
             >
               Actualizar hogar
             </button>
+            <button
+              type='button'
+              className={selectedKind === 'login' ? styles.toggleActive : styles.toggle}
+              onClick={() => setSelectedKind('login')}
+            >
+              Codigo 6 digitos
+            </button>
           </div>
 
           {!selectedItem && (
@@ -181,7 +195,7 @@ export default function ClientesPage() {
           {selectedItem && (
             <article className={styles.mailCard}>
               <div className={styles.mailHeader}>
-                <h2>{selectedKind === 'travel' ? 'Estoy de viaje' : 'Actualizar hogar'}</h2>
+                <h2>{CLIENTE_KIND_LABELS[selectedKind]}</h2>
                 <span className={styles.badge}>Ultimo correo</span>
               </div>
 
