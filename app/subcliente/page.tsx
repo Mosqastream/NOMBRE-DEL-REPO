@@ -23,6 +23,35 @@ type SubclientePayload = {
 
 const splitPin = (value: string) => value.replace(/\D/g, '').slice(0, 4).split('')
 
+const getSupabaseStorageKey = () => {
+  try {
+    const host = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL || '').hostname
+    const projectRef = host.split('.')[0]
+    return projectRef ? `sb-${projectRef}-auth-token` : null
+  } catch {
+    return null
+  }
+}
+
+const persistSessionFallback = (session: NonNullable<SubclientePayload['session']>) => {
+  const storageKey = getSupabaseStorageKey()
+  if (!storageKey) return false
+
+  window.localStorage.setItem(
+    storageKey,
+    JSON.stringify({
+      access_token: session.access_token,
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      expires_in: 3600,
+      refresh_token: session.refresh_token,
+      token_type: 'bearer',
+      user: null,
+    })
+  )
+
+  return true
+}
+
 export default function SubclientePage() {
   const router = useRouter()
   const [mode, setMode] = useState<FlowMode>('lookup')
@@ -58,12 +87,27 @@ export default function SubclientePage() {
       throw new Error('No se recibio la sesion.')
     }
 
-    const sessionResp = await supabase.auth.setSession({
-      access_token: payload.session.access_token,
-      refresh_token: payload.session.refresh_token,
-    })
+    let sessionResp: Awaited<ReturnType<typeof supabase.auth.setSession>> | null = null
+    try {
+      sessionResp = await supabase.auth.setSession({
+        access_token: payload.session.access_token,
+        refresh_token: payload.session.refresh_token,
+      })
+    } catch {
+      if (persistSessionFallback(payload.session)) {
+        router.replace('/panel')
+        return
+      }
+
+      throw new Error('No se pudo guardar la sesion en este navegador.')
+    }
 
     if (sessionResp.error) {
+      if (persistSessionFallback(payload.session)) {
+        router.replace('/panel')
+        return
+      }
+
       throw new Error(sessionResp.error.message)
     }
 
