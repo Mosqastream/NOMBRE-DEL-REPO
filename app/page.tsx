@@ -21,12 +21,46 @@ import styles from './page.module.css'
 type AuthMode = 'signin' | 'signup'
 type PendingAction = 'signin' | 'signup' | null
 
+type AuthSessionPayload = {
+  access_token: string
+  refresh_token: string
+}
+
 const INITIAL_FORM = {
   password: '',
   phoneCountry: DEFAULT_PHONE_COUNTRY,
   phoneDigits: '',
   telegram: '',
   username: '',
+}
+
+const getSupabaseStorageKey = () => {
+  try {
+    const host = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL || '').hostname
+    const projectRef = host.split('.')[0]
+    return projectRef ? `sb-${projectRef}-auth-token` : null
+  } catch {
+    return null
+  }
+}
+
+const persistSessionFallback = (session: AuthSessionPayload) => {
+  const storageKey = getSupabaseStorageKey()
+  if (!storageKey) return false
+
+  window.localStorage.setItem(
+    storageKey,
+    JSON.stringify({
+      access_token: session.access_token,
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      expires_in: 3600,
+      refresh_token: session.refresh_token,
+      token_type: 'bearer',
+      user: null,
+    })
+  )
+
+  return true
 }
 
 function PhoneCountryPicker({
@@ -318,18 +352,23 @@ export default function HomePage() {
 
     const payload = (await response.json().catch(() => ({}))) as {
       error?: string
-      session?: {
-        access_token: string
-        refresh_token: string
-      }
+      session?: AuthSessionPayload
     }
 
     if (!response.ok || !payload.session) {
       throw new Error(payload.error || 'No se pudo iniciar sesion.')
     }
 
-    const setSessionResp = await supabase.auth.setSession(payload.session)
+    let setSessionResp: Awaited<ReturnType<typeof supabase.auth.setSession>> | null = null
+    try {
+      setSessionResp = await supabase.auth.setSession(payload.session)
+    } catch {
+      if (persistSessionFallback(payload.session)) return
+      throw new Error('No se pudo guardar la sesion en este navegador.')
+    }
+
     if (setSessionResp.error) {
+      if (persistSessionFallback(payload.session)) return
       throw setSessionResp.error
     }
   }
